@@ -12,6 +12,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
+repository = "https://github.com/996666925/QFramework-rs"
 authors = ["QFramework Rust Contributors"]
 keywords = ["qframework", "game", "architecture", "mvc", "cqrs"]
 categories = ["game-development"]

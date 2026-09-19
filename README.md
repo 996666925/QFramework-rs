@@ -1,5 +1,7 @@
 # QFramework for Rust
 
+**仓库地址**：<https://github.com/996666925/QFramework-rs>
+
 [QFramework](https://github.com/liangxiegame/QFramework) 的 Rust 实现，专为 [Bevy](https://bevy.org) 打造。
 
 保留了 QFramework 最核心的设计——**四层架构 + 编译期依赖约束 + CQRS + 事件驱动 + 可绑定属性**，
