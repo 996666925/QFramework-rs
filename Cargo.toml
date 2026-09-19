@@ -1,0 +1,23 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/qframework-core",
+    "crates/qframework-macros",
+    "crates/qframework-bevy",
+    "examples/mini_game",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+authors = ["QFramework Rust Contributors"]
+keywords = ["qframework", "game", "architecture", "mvc", "cqrs"]
+categories = ["game-development"]
+
+[workspace.dependencies]
+qframework-core = { version = "0.1.0", path = "crates/qframework-core" }
+qframework-macros = { version = "0.1.0", path = "crates/qframework-macros" }
+qframework-bevy = { version = "0.1.0", path = "crates/qframework-bevy" }
+bevy = { version = "0.19", default-features = false }

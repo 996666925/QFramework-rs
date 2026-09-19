@@ -1,0 +1,14 @@
+[package]
+name = "mini-game"
+description = "QFramework for Rust 的完整示例：Model / Command / Query / System / Utility / Controller 六种角色全部参与"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+qframework-core = { workspace = true }
+qframework-bevy = { workspace = true }
+bevy = { workspace = true, features = ["std"] }

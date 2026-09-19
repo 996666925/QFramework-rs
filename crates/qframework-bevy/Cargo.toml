@@ -1,0 +1,15 @@
+[package]
+name = "qframework-bevy"
+description = "QFramework 的 Bevy 集成层：插件、资源、消息桥接与控制器调度"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
+
+[dependencies]
+qframework-core = { workspace = true }
+bevy = { workspace = true, features = ["std"] }
