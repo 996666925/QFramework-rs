@@ -34,8 +34,7 @@ impl std::error::Error for BindArchitectureError {}
 /// 为派生了 `IController` 的 Godot Node 提供接入方法。
 ///
 /// 不把节点放进 `Rc` 或 IOC，不接管 `INode` 等 Godot 接口。
-/// 在 `ready` 中绑定后显式调用 `IController::init(self)`；在 `exit_tree` 中
-/// 调用 `IController::deinit(self)` 并释放 inbox。普通订阅可用
+/// 在 `ready` 中建立订阅，在 `exit_tree` 中释放 inbox。普通订阅可用
 /// [`unregister_when_tree_exited`](crate::GodotUnRegisterExt::unregister_when_tree_exited)
 /// 自动注销。重新入树时需要重新订阅，
 /// 可调用 Godot 的 `request_ready()` 让 `ready` 再次执行。

@@ -186,10 +186,6 @@ pub trait IController:
     + ICanRegisterEvent
     + 'static
 {
-    /// 架构初始化完成后调用。
-    fn init(&self) {}
-    /// 架构销毁时调用。
-    fn deinit(&self) {}
 }
 
 /// 业务逻辑层：承载可被多个表现层复用的逻辑。

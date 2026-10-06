@@ -29,7 +29,7 @@ impl Layer {
         }
     }
 
-    /// 承载生命周期钩子的辅助属性名，例如 `#[model(init = ...)]`。
+    /// 层辅助属性名，例如 `#[model(init = ...)]` 或 `#[controller(architecture = ...)]`。
     fn helper_attribute(self) -> &'static str {
         match self {
             Layer::Controller => "controller",
@@ -134,23 +134,30 @@ fn try_expand(input: DeriveInput, layer: Layer) -> syn::Result<TokenStream> {
 
     let layer_trait = layer.layer_trait();
 
-    let init = lifecycle.init.map(|expr| {
-        quote! {
-            fn init(&self) {
-                let hook = #expr;
-                hook(self);
+    let lifecycle_hooks = if layer == Layer::Controller {
+        quote! {}
+    } else {
+        let init = lifecycle.init.map(|expr| {
+            quote! {
+                fn init(&self) {
+                    let hook = #expr;
+                    hook(self);
+                }
             }
-        }
-    });
-
-    let deinit = lifecycle.deinit.map(|expr| {
-        quote! {
-            fn deinit(&self) {
-                let hook = #expr;
-                hook(self);
+        });
+        let deinit = lifecycle.deinit.map(|expr| {
+            quote! {
+                fn deinit(&self) {
+                    let hook = #expr;
+                    hook(self);
+                }
             }
+        });
+        quote! {
+            #init
+            #deinit
         }
-    });
+    };
 
     Ok(quote! {
         #arch_impls
@@ -158,8 +165,7 @@ fn try_expand(input: DeriveInput, layer: Layer) -> syn::Result<TokenStream> {
         #(#capability_impls)*
 
         impl #layer_impl_generics ::qframework_core::#layer_trait for #struct_name #layer_ty_generics #layer_where_clause {
-            #init
-            #deinit
+            #lifecycle_hooks
         }
     })
 }
@@ -208,7 +214,7 @@ fn find_arch_field(input: &DeriveInput, layer: Layer) -> syn::Result<Ident> {
     ))
 }
 
-/// 解析 `#[model(init = ..., deinit = ...)]` 这样的辅助属性。
+/// 解析层生命周期和 Controller 架构绑定辅助属性。
 fn parse_lifecycle(attrs: &[Attribute], layer: Layer) -> syn::Result<Lifecycle> {
     let helper = layer.helper_attribute();
     let mut lifecycle = Lifecycle::default();
@@ -224,13 +230,13 @@ fn parse_lifecycle(attrs: &[Attribute], layer: Layer) -> syn::Result<Lifecycle> 
             let Meta::NameValue(name_value) = &entry else {
                 return Err(syn::Error::new_spanned(
                     &entry,
-                    format!("`#[{helper}(...)]` 只支持 `init = <表达式>` 与 `deinit = <表达式>`"),
+                    format!("`#[{helper}(...)]` 参数必须使用 `name = value` 形式"),
                 ));
             };
 
-            if name_value.path.is_ident("init") {
+            if layer != Layer::Controller && name_value.path.is_ident("init") {
                 lifecycle.init = Some(name_value.value.clone());
-            } else if name_value.path.is_ident("deinit") {
+            } else if layer != Layer::Controller && name_value.path.is_ident("deinit") {
                 lifecycle.deinit = Some(name_value.value.clone());
             } else if layer == Layer::Controller && name_value.path.is_ident("architecture") {
                 if lifecycle.architecture.is_some() {
@@ -245,8 +251,7 @@ fn parse_lifecycle(attrs: &[Attribute], layer: Layer) -> syn::Result<Lifecycle> 
                 return Err(syn::Error::new_spanned(
                     &name_value.path,
                     if layer == Layer::Controller {
-                        "`#[controller(...)]` supports `init`, `deinit` and `architecture`"
-                            .to_owned()
+                        "`#[controller(...)]` only supports `architecture`".to_owned()
                     } else {
                         format!("`#[{helper}(...)]` 只支持 `init` 与 `deinit`")
                     },

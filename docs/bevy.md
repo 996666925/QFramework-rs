@@ -165,7 +165,7 @@ app.add_systems(Update, (tick_counter, refresh_scene).chain());
 它随资源移除或实体销毁而析构，自动注销订阅。回调可以设置共享脏标记，实际 UI 修改在 Bevy 系统中执行。
 完整示例见 `examples/mini_game/src/controller/hud.rs`。
 
-核心库的 `IController` 仍可用于非 Bevy 场景，绑定后的 `init`、运行和 `deinit` 由调用方管理。
+核心库的 `IController` 仍可用于非 Bevy 场景；Controller 生命周期由宿主管理，Bevy 中直接使用系统生命周期。
 
 ---
 

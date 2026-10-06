@@ -36,9 +36,9 @@ struct PlayerController {
 ## 架构与生命周期
 
 1. 定义实现 `QApplication` 的应用类型，并在节点上声明 `#[controller(architecture = GameApp)]`。
-2. 在节点 `ready` 中调用 `IController::init(self)`；首次使用能力时会自动获取应用架构。
+2. 在节点 `ready` 中建立订阅；首次使用能力时会自动获取应用架构。
 3. 节点使用 `get_model` / `get_system` / `send_command` / `send_query` / `register_event`。
-4. 订阅使用 `unregister_when_tree_exited` 自动注销；在 `exit_tree` 中调用 `IController::deinit(self)` 并释放可选的 inbox。
+4. 订阅使用 `unregister_when_tree_exited` 自动注销；在 `exit_tree` 中释放可选的 inbox。
 5. 应用结束、所有节点已退出后调用 `GameApp::deinit_interface()`。
 
 ```rust

@@ -158,7 +158,6 @@ impl SaveUtility {
 // --- Controller -----------------------------------------------------------
 
 #[derive(Default, IController)]
-#[controller(init = Self::start)]
 struct HudController {
     arch: ArchRef,
     subscriptions: RefCell<IUnRegisterList>,
@@ -414,7 +413,6 @@ fn check_architecture_api() {
 
     // attach_controller + 手动使用
     let controller: Rc<HudController> = architecture.attach_controller(HudController::default());
-    IController::init(controller.as_ref());
     controller.send_command(AddGoldCommand { amount: 5 });
     let _ = controller.send_query(GetInventoryQuery);
     let _un = controller.register_event::<GameStartedEvent, _>(|_| {});

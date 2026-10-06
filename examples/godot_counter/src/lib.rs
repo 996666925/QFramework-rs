@@ -87,7 +87,6 @@ impl CounterScene {
         };
 
         assert_eq!(controller.bind().count(), 0);
-        assert_eq!(controller.bind().inits.get(), 1);
         assert_eq!(count.handler_count(), 1);
         assert_display(0);
 
@@ -108,14 +107,12 @@ impl CounterScene {
                 .has_listener::<CountChanged>()
         );
         assert_eq!(count.handler_count(), 0);
-        assert_eq!(controller.bind().deinits.get(), 1);
         CounterApp::interface().send_command(IncreaseCount);
         assert_display(2);
 
         // 重新入树后 ready 重新订阅，初值回调立即恢复最新显示。
         controller.request_ready();
         self.base_mut().add_child(&controller);
-        assert_eq!(controller.bind().inits.get(), 2);
         assert_eq!(count.handler_count(), 1);
         assert!(
             CounterApp::interface()
@@ -132,7 +129,6 @@ impl CounterScene {
         assert_eq!(node2d.get_position().x, 4.0);
 
         self.base_mut().remove_child(&controller);
-        assert_eq!(controller.bind().deinits.get(), 2);
         controller.free();
         assert_eq!(count.handler_count(), 0);
         assert!(
@@ -220,11 +216,9 @@ impl CounterScene {
 /// 节点直接拥有 Controller 能力，不由 Architecture / Rc 托管。
 #[derive(GodotClass, IController)]
 #[class(base = Node)]
-#[controller(architecture = CounterApp, init = Self::on_init, deinit = Self::on_deinit)]
+#[controller(architecture = CounterApp)]
 struct CounterNode {
     arch: ArchRef,
-    inits: Cell<u32>,
-    deinits: Cell<u32>,
     base: Base<Node>,
 }
 
@@ -233,14 +227,11 @@ impl INode for CounterNode {
     fn init(base: Base<Node>) -> Self {
         Self {
             arch: ArchRef::new(),
-            inits: Cell::new(0),
-            deinits: Cell::new(0),
             base,
         }
     }
 
     fn ready(&mut self) {
-        IController::init(self);
         let mut display = self.base().get_node_as::<Node2D>("Display");
         let mut ui = self.base().get_node_as::<Node>("../UI");
 
@@ -262,10 +253,6 @@ impl INode for CounterNode {
         })
         .unregister_when_tree_exited(&mut self.base_mut());
     }
-
-    fn exit_tree(&mut self) {
-        IController::deinit(self);
-    }
 }
 
 #[godot_api]
@@ -278,16 +265,6 @@ impl CounterNode {
     #[func]
     fn count(&self) -> i32 {
         self.send_query(GetCount)
-    }
-}
-
-impl CounterNode {
-    fn on_init(&self) {
-        self.inits.set(self.inits.get() + 1);
-    }
-
-    fn on_deinit(&self) {
-        self.deinits.set(self.deinits.get() + 1);
     }
 }
 
@@ -307,14 +284,6 @@ impl INode2D for SpatialCounter {
             arch: ArchRef::new(),
             base,
         }
-    }
-
-    fn ready(&mut self) {
-        IController::init(self);
-    }
-
-    fn exit_tree(&mut self) {
-        IController::deinit(self);
     }
 }
 

@@ -32,7 +32,7 @@ cargo fetch
 ```
 
 检查场景节点访问、Command / Query、属性初值与同步界面更新、
-Controller 生命周期钩子、退出清理、重新入树、销毁订阅、提前注销和从未入树的节点释放。
+Controller 生命周期、退出清理、重新入树、销毁订阅、提前注销和从未入树的节点释放。
 成功输出 `QFRAMEWORK_GODOT_SMOKE_OK`；缺少成功标记、引擎错误或断言失败都会使脚本失败。
 
 示例 `.gdextension` 路径使用 workspace 默认的 `target` 目录。

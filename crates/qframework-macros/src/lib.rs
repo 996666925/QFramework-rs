@@ -67,7 +67,8 @@ pub fn derive_i_system(input: TokenStream) -> TokenStream {
 /// 为**表现层**对象生成实现。
 ///
 /// `#[controller(architecture = MyApp)]` 自动绑定 `QApplication::interface()`，
-/// 显式注入的架构优先。仍需保留 `arch: ArchRef` 字段。
+/// 显式注入的架构优先。仍需保留 `arch: ArchRef` 字段。Controller 的生命周期
+/// 由宿主（例如 Godot 的 `ready` / `exit_tree`）管理。
 ///
 /// 可以获取 System / Model，发送 Command / Query，并注册事件；
 /// 但**不能**发送事件、也不能直接修改 Model。

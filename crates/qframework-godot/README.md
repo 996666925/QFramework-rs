@@ -30,7 +30,6 @@ impl INode for Hud {
     }
 
     fn ready(&mut self) {
-        IController::init(self);
         let mut label = self.base().get_node_as::<Label>("HpLabel");
         self.get_model::<PlayerModel>().hp.register_with_init_value(
             move |hp| {
@@ -41,9 +40,6 @@ impl INode for Hud {
         ).unregister_when_tree_exited(&mut self.base_mut());
     }
 
-    fn exit_tree(&mut self) {
-        IController::deinit(self);
-    }
 }
 ```
 
@@ -58,7 +54,7 @@ impl INode for Hud {
 - `unregister_when_node_destroyed` 在节点真正销毁时注销，包括从未入树的节点。
 - `unregister_when_tree_exited` 在下一次退出树时注销，适合在 `ready` 中建立的 UI 订阅。
 - Godot 节点可在主线程回调中正常使用 `base()`、`base_mut()`、`get_node_as`、信号与场景树。
-- `IController::init` / `deinit` 由节点生命周期显式调用，重新入树时重新订阅。
+- Controller 生命周期由 Godot 的 `ready` / `exit_tree` 管理，重新入树时重新订阅。
 - `ControllerInbox` 被析构或 `unsubscribe` 时取消订阅，不反初始化共享架构。
 
 核心架构和所有层都在单线程使用，普通回调支持 `FnMut` 和非线程安全捕获。

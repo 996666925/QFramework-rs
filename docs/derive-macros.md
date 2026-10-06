@@ -85,11 +85,11 @@ impl SaveUtility {
 
 ## 生命周期钩子
 
-Controller 可同时声明所属应用，首次使用能力时自动绑定其共享架构：
+Controller 可声明所属应用，首次使用能力时自动绑定其共享架构：
 
 ```rust
 #[derive(Default, IController)]
-#[controller(architecture = CounterApp, init = Self::start)]
+#[controller(architecture = CounterApp)]
 struct CounterController {
     arch: ArchRef,
 }
@@ -100,7 +100,7 @@ struct CounterController {
 仍保留 `ArchRef` 字段以支持显式注入；已经绑定的架构优先，过期引用会报错而不会切换实例。
 `architecture` 选项仅适用于 Controller，应用类型支持模块路径和泛型。
 
-用层专属的辅助属性指定 `init` / `deinit`。值可以是**闭包**，也可以是**函数或方法路径**。
+Model、System、Utility 可以用层专属的辅助属性指定 `init` / `deinit`。值可以是**闭包**，也可以是**函数或方法路径**。
 
 ```rust
 // 闭包
@@ -130,17 +130,9 @@ impl PlayerModel {
 }
 ```
 
-辅助属性名与派生宏一一对应：`#[controller(..)]`、`#[system(..)]`、`#[model(..)]`、`#[utility(..)]`。
+辅助属性名与派生宏一一对应：`#[system(..)]`、`#[model(..)]`、`#[utility(..)]`。
 
-两个钩子都是可选的，可以只写一个：
-
-```rust
-#[derive(Default, IController)]
-#[controller(init = Self::start)]
-struct HudController { arch: ArchRef }
-```
-
-钩子接收的是 `&Self`（即 `&self`），钩子内的可变状态需要内部可变性（`BindableProperty`、`Atomic*`、`RefCell`、`RefCell`）。Godot Controller 节点的 `ready` / `process` / `exit_tree` 回调仍可使用 `&mut self`，主线程私有状态也可使用 `Cell` / `RefCell`。
+钩子接收的是 `&Self`（即 `&self`），钩子内的可变状态需要内部可变性（`BindableProperty`、`RefCell`）。Controller 使用宿主提供的生命周期，例如 Godot 的 `ready` / `exit_tree` 或 Bevy 的插件与系统。
 
 ---
 
@@ -191,7 +183,7 @@ struct CounterModel { arch: ArchRef }
 impl IModel for CounterModel { }   // ❌ conflicting implementations
 ```
 
-如果某个层需要完全自定义的 trait 实现（比如要覆盖 `deinit` 之外的行为），就**不要用派生宏**，改为手写展开后的那几行。需要 `init` / `deinit` 的话，用辅助属性就够了，不必手写。
+如果某个层需要完全自定义的 trait 实现，就**不要用派生宏**，改为手写展开后的那几行。Model、System、Utility 需要 `init` / `deinit` 时，用辅助属性就够了，不必手写。
 
 ---
 
@@ -230,7 +222,7 @@ error: `#[model(...)]` 只支持 `init = <表达式>` 与 `deinit = <表达式>`
 
 ## 与层 trait 的关系
 
-派生宏生成的层 `impl` 是**空的**（只填了钩子），所以 trait 的默认方法都会生效。`IController` / `ISystem` / `IModel` / `IUtility` 的 `init` 与 `deinit` 默认都是空实现，写了钩子才会被调用。
+派生宏生成的层 `impl` 通常是**空的**（Model、System、Utility 只填配置的钩子），Controller 不包含生命周期钩子。Model、System、Utility 的 `init` 与 `deinit` 默认都是空实现，写了钩子才会被调用。
 
 想在宏之外扩展行为，就在 `impl 你的类型` 里加普通方法——它们和 trait 无关，随便写：
 

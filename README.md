@@ -139,7 +139,7 @@ struct MySystem {
 }
 ```
 
-**生命周期钩子**：用 `#[model(...)]` / `#[system(...)]` / `#[controller(...)]` / `#[utility(...)]`
+**生命周期钩子**：用 `#[model(...)]` / `#[system(...)]` / `#[utility(...)]`
 指定 `init` / `deinit`，值可以是闭包，也可以是函数/方法路径：
 
 ```rust
@@ -287,7 +287,7 @@ app.add_systems(Update, (increase_count, read_messages).chain());
 
 Bevy 系统可以直接使用 `Query`、`Commands` 和 Resource 操作场景、输入与 UI。
 用 `.chain()`、`.before(...)` / `.after(...)` 或自定义 `SystemSet` 排序。
-核心库的 `IController` 保留给非 Bevy 场景，生命周期由调用方管理。
+核心库的 `IController` 保留给非 Bevy 场景，生命周期由宿主管理。
 
 ---
 

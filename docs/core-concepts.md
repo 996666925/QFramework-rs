@@ -323,7 +323,7 @@ Query 的价值是把「怎么取」和「取什么」解耦。如果调用方�
 四层的共同点：
 
 - 都要求 `'static`，无需线程安全约束，可持有 `Rc` / `RefCell`；Controller 不存入 IOC，可持有场景节点。
-- 都有可选的 `init(&self)` / `deinit(&self)` 钩子。
+- Model / System / Utility 有可选的 `init(&self)` / `deinit(&self)` 钩子；Controller 生命周期由宿主管理。
 - Controller / System / Model 需要 `ArchRef` 字段（`Weak<Architecture>`），Utility 不需要。
 
 ### IController（表现层）
