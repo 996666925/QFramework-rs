@@ -482,7 +482,7 @@ let un = architecture.register_event::<GameStartedEvent, _>(move |_| {
 ```rust
 #[test]
 fn purchase_fails_when_not_enough_gold() {
-    let architecture = ArchitectureBuilder::new("Test")
+    let architecture = ArchitectureBuilder::new()
         .model(ShopModel::default())
         .model(PlayerModel::default())
         .build();
@@ -503,7 +503,7 @@ fn purchase_fails_when_not_enough_gold() {
 ```rust
 #[test]
 fn item_purchased_event_is_emitted() {
-    let architecture = ArchitectureBuilder::new("Test")
+    let architecture = ArchitectureBuilder::new()
         .model(ShopModel::default())
         .build();
 
@@ -568,7 +568,7 @@ src/
 ```rust
 impl QApplication for MyGame {
     fn build() -> ArchitectureBuilder {
-        ArchitectureBuilder::new("MyGame")
+        ArchitectureBuilder::new()
             // 工具层
             .utility(SaveUtility)
             .utility(PlatformUtility)

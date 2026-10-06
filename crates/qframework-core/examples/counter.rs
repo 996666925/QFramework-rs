@@ -145,7 +145,7 @@ struct CounterApp;
 
 impl QApplication for CounterApp {
     fn build() -> ArchitectureBuilder {
-        ArchitectureBuilder::new("CounterApp")
+        ArchitectureBuilder::new()
             .utility(ConsoleUtility)
             .model(CounterModel::default())
             .system(CounterSystem::default())
@@ -155,11 +155,7 @@ impl QApplication for CounterApp {
 fn main() {
     let architecture = CounterApp::interface();
 
-    println!(
-        "架构 `{}` 初始化完成（inited = {}）",
-        architecture.name(),
-        architecture.is_inited()
-    );
+    println!("架构初始化完成（inited = {}）", architecture.is_inited());
 
     // Controller 首次访问时自动获取 CounterApp 的共享架构。
     let controller = CounterController::default();

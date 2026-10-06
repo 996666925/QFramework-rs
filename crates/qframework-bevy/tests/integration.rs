@@ -40,7 +40,7 @@ struct TestApp;
 
 impl QApplication for TestApp {
     fn build() -> ArchitectureBuilder {
-        ArchitectureBuilder::new("TestApp").model(CounterModel::default())
+        ArchitectureBuilder::new().model(CounterModel::default())
     }
 }
 
@@ -91,7 +91,6 @@ fn architecture_is_available_as_resource() {
     app.update();
 
     let architecture = app.world().non_send::<QArchitecture>();
-    assert_eq!(architecture.name(), "TestApp");
     assert!(architecture.is_inited());
     assert!(architecture.try_get_model::<CounterModel>().is_some());
 }
@@ -167,7 +166,7 @@ struct OtherApp;
 
 impl QApplication for OtherApp {
     fn build() -> ArchitectureBuilder {
-        ArchitectureBuilder::new("OtherApp")
+        ArchitectureBuilder::new()
     }
 }
 

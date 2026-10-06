@@ -188,7 +188,7 @@ let model = PlayerModel::default();
 model.get_utility::<SaveUtility>();      // panic
 
 // ✓
-let architecture = ArchitectureBuilder::new("App")
+let architecture = ArchitectureBuilder::new()
     .model(PlayerModel::default())
     .build();
 architecture.get_model::<PlayerModel>().get_utility::<SaveUtility>();
@@ -207,7 +207,7 @@ if let Some(architecture) = self.arch.try_get() {
 忘了在 builder 里注册，或者类型写错了（比如注册的是 `PlayerModel`，取的是 `PlayerStateModel`）。
 
 ```rust
-let architecture = ArchitectureBuilder::new("App")
+let architecture = ArchitectureBuilder::new()
     .model(PlayerModel::default())        // ← 检查这里
     .build();
 
@@ -356,7 +356,7 @@ World 读取使用 `world.non_send::<QArchitecture>()`。
 ```rust
 // 1. 打印架构状态
 println!("{:?}", architecture);
-// Architecture { name: "MyGame", inited: true, registered: 5 }
+// Architecture { inited: true, registered: 5 }
 
 // 2. 确认类型注册了
 println!("{:?}", architecture.try_get_model::<PlayerModel>().is_some());

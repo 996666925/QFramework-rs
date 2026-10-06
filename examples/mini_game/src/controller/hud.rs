@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn removing_hud_resource_unregisters_subscriptions() {
-        let architecture = ArchitectureBuilder::new("HudTest")
+        let architecture = ArchitectureBuilder::new()
             .model(PlayerModel::new_player())
             .build();
         let player = architecture.get_model::<PlayerModel>();

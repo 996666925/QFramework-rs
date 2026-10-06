@@ -15,7 +15,7 @@ pub struct MiniGame;
 
 impl QApplication for MiniGame {
     fn build() -> ArchitectureBuilder {
-        ArchitectureBuilder::new("MiniGame")
+        ArchitectureBuilder::new()
             // ── 工具层：基础设施，不承载业务 ──
             .utility(LogUtility::new())
             .utility(SaveUtility::new())

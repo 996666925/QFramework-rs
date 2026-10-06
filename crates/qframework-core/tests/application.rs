@@ -24,7 +24,7 @@ fn controllers_share_application_without_injection_but_accept_explicit_overrides
     struct CounterApp;
     impl QApplication for CounterApp {
         fn build() -> ArchitectureBuilder {
-            ArchitectureBuilder::new("Shared").model(CounterModel::default())
+            ArchitectureBuilder::new().model(CounterModel::default())
         }
     }
 
@@ -62,7 +62,7 @@ fn repeated_access_initializes_once() {
     struct App;
     impl QApplication for App {
         fn build() -> ArchitectureBuilder {
-            ArchitectureBuilder::new("Once").model(Model::default())
+            ArchitectureBuilder::new().model(Model::default())
         }
     }
     let first = App::interface();
@@ -79,7 +79,7 @@ fn application_types_and_fresh_instances_are_isolated() {
     struct App<T>(std::marker::PhantomData<T>);
     impl<T: 'static> QApplication for App<T> {
         fn build() -> ArchitectureBuilder {
-            ArchitectureBuilder::new("Generic").model(CounterModel::default())
+            ArchitectureBuilder::new().model(CounterModel::default())
         }
     }
 
@@ -134,7 +134,7 @@ fn lifecycle_hooks_can_access_the_same_interface_and_reset_builds_a_new_instance
     struct App;
     impl QApplication for App {
         fn build() -> ArchitectureBuilder {
-            ArchitectureBuilder::new("Lifecycle").model(Model::default())
+            ArchitectureBuilder::new().model(Model::default())
         }
     }
 
@@ -155,7 +155,7 @@ fn failed_initialization_can_be_retried() {
     struct App;
     impl QApplication for App {
         fn build() -> ArchitectureBuilder {
-            ArchitectureBuilder::new("Retry").patch(|_| {
+            ArchitectureBuilder::new().patch(|_| {
                 if ATTEMPTS.replace(ATTEMPTS.get() + 1) == 0 {
                     panic!("initialization failed");
                 }
@@ -177,7 +177,7 @@ fn recursive_build_panics_without_poisoning_the_slot() {
             if ATTEMPTS.replace(ATTEMPTS.get() + 1) == 0 {
                 App::interface();
             }
-            ArchitectureBuilder::new("Recursive")
+            ArchitectureBuilder::new()
         }
     }
     assert!(std::panic::catch_unwind(App::interface).is_err());
@@ -199,7 +199,7 @@ fn expired_injected_controller_does_not_fall_back_to_shared_application() {
         arch: ArchRef,
     }
     let controller = Controller::default();
-    let isolated = ArchitectureBuilder::new("Temporary").build();
+    let isolated = ArchitectureBuilder::new().build();
     controller.arch_ref().set(&isolated);
     drop(isolated);
     assert!(

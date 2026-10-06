@@ -55,7 +55,7 @@ mod tests {
     use super::*;
     #[test]
     fn events_are_queued_and_unregistered_on_drop() {
-        let architecture = qframework_core::ArchitectureBuilder::new("Inbox").build();
+        let architecture = qframework_core::ArchitectureBuilder::new().build();
         let inbox = ControllerInbox::<Rc<i32>>::event(&architecture);
         architecture.send_event(Rc::new(1));
         architecture.send_event(Rc::new(2));

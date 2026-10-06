@@ -68,7 +68,7 @@ struct CounterApp;
 
 impl QApplication for CounterApp {
     fn build() -> ArchitectureBuilder {
-        ArchitectureBuilder::new("BevyCounterApp")
+        ArchitectureBuilder::new()
             .model(CounterModel::default())
             .system(CounterSystem::default())
     }

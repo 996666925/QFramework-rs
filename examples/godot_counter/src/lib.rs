@@ -39,7 +39,7 @@ struct CounterApp;
 
 impl QApplication for CounterApp {
     fn build() -> ArchitectureBuilder {
-        ArchitectureBuilder::new("GodotCounter").model(CounterModel::default())
+        ArchitectureBuilder::new().model(CounterModel::default())
     }
 }
 

@@ -36,7 +36,7 @@ struct MyGame;
 
 impl QApplication for MyGame {
     fn build() -> ArchitectureBuilder {
-        ArchitectureBuilder::new("MyGame")
+        ArchitectureBuilder::new()
             .utility(SaveUtility)
             .model(PlayerModel::default())
             .model(InventoryModel::default())
@@ -284,7 +284,7 @@ QFramework 的核心不依赖 Bevy，**大部分逻辑不需要 Bevy 就能测**
 ```rust
 #[test]
 fn gold_decreases_after_purchase() {
-    let architecture = ArchitectureBuilder::new("Test")
+    let architecture = ArchitectureBuilder::new()
         .model(ShopModel::default())
         .build();
 

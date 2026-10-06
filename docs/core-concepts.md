@@ -28,7 +28,7 @@ struct MyApp;
 
 impl QApplication for MyApp {
     fn build() -> ArchitectureBuilder {
-        ArchitectureBuilder::new("MyApp")
+        ArchitectureBuilder::new()
             .model(PlayerModel::default())
             .system(BattleSystem::default())
     }
@@ -63,7 +63,7 @@ let player = hud.get_model::<PlayerModel>(); // 首次访问自动绑定，无�
 所有架构底层仍通过 `ArchitectureBuilder` 创建：
 
 ```rust
-let architecture: Rc<Architecture> = ArchitectureBuilder::new("MyApp")
+let architecture: Rc<Architecture> = ArchitectureBuilder::new()
     .model(PlayerModel::default())        // 注册数据层
     .system(BattleSystem::default())      // 注册业务逻辑层
     .utility(FileUtility::default())      // 注册工具层
@@ -79,7 +79,7 @@ let architecture: Rc<Architecture> = ArchitectureBuilder::new("MyApp")
 
 > ⚠️ **重复注册同一类型会静默覆盖。** IOC 以 `TypeId` 为键，每种类型只保留一个实例：
 > ```rust
-> let architecture = ArchitectureBuilder::new("App")
+> let architecture = ArchitectureBuilder::new()
 >     .model(PlayerModel::default())
 >     .model(PlayerModel::default())      // 覆盖上面那个，不报错
 >     .build();
@@ -127,7 +127,6 @@ architecture.send_event_default::<GameStartedEvent>();
 
 | 方法 | 说明 |
 |---|---|
-| `name() -> &'static str` | 架构名，仅供日志与调试 |
 | `is_inited() -> bool` | 是否已完成两阶段初始化 |
 | `registered_count() -> usize` | 已注册的层对象数量 |
 | `rc() -> Rc<Architecture>` | 取得自身句柄（层对象内部用它注入引用） |

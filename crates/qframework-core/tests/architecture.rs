@@ -43,7 +43,7 @@ struct CounterSystem {
 
 #[test]
 fn command_changes_model_state() {
-    let architecture = ArchitectureBuilder::new("Test")
+    let architecture = ArchitectureBuilder::new()
         .model(CounterModel::default())
         .build();
 
@@ -55,7 +55,7 @@ fn command_changes_model_state() {
 
 #[test]
 fn events_reach_subscribers() {
-    let architecture = ArchitectureBuilder::new("Test")
+    let architecture = ArchitectureBuilder::new()
         .model(CounterModel::default())
         .build();
 
@@ -78,7 +78,7 @@ fn events_reach_subscribers() {
 
 #[test]
 fn models_initialize_before_systems() {
-    let architecture = ArchitectureBuilder::new("Test")
+    let architecture = ArchitectureBuilder::new()
         .model(CounterModel::default())
         .system(CounterSystem::default())
         .build();
@@ -114,7 +114,7 @@ fn bindable_property_notifies_and_can_be_silent() {
 
 #[test]
 fn deinit_clears_container_and_events() {
-    let architecture = ArchitectureBuilder::new("Test")
+    let architecture = ArchitectureBuilder::new()
         .model(CounterModel::default())
         .build();
 
@@ -148,7 +148,7 @@ impl HookedModel {
 
 #[test]
 fn derive_supports_lifecycle_hooks() {
-    let architecture = ArchitectureBuilder::new("Test")
+    let architecture = ArchitectureBuilder::new()
         .model(HookedModel::default())
         .build();
 
@@ -167,7 +167,7 @@ struct HookedUtility {
 
 #[test]
 fn utility_derive_does_not_require_arch_field() {
-    let architecture = ArchitectureBuilder::new("Test")
+    let architecture = ArchitectureBuilder::new()
         .utility(HookedUtility::default())
         .build();
 
@@ -184,13 +184,13 @@ struct SystemWithRenamedArch {
 
 #[test]
 fn arch_field_can_be_renamed_with_attribute() {
-    let architecture = ArchitectureBuilder::new("Test")
+    let architecture = ArchitectureBuilder::new()
         .system(SystemWithRenamedArch::default())
         .build();
 
     let system = architecture.get_system::<SystemWithRenamedArch>();
     // 注入成功：architecture() 能拿到架构
-    assert_eq!(system.architecture().name(), "Test");
+    assert!(Rc::ptr_eq(&system.architecture(), &architecture));
 }
 
 #[derive(Default, IController)]
@@ -200,7 +200,7 @@ struct UnusedController {
 
 #[test]
 fn controller_derive_generates_capability_impls() {
-    let architecture = ArchitectureBuilder::new("Test")
+    let architecture = ArchitectureBuilder::new()
         .model(CounterModel::default())
         .build();
 
@@ -221,7 +221,7 @@ struct MainThreadController<T: 'static> {
 
 #[test]
 fn controller_supports_main_thread_state_and_generic_derive() {
-    let architecture = ArchitectureBuilder::new("MainThread")
+    let architecture = ArchitectureBuilder::new()
         .model(CounterModel::default())
         .build();
     let controller = architecture.attach_controller(MainThreadController::<u32>::default());
@@ -244,7 +244,7 @@ where
 fn derive_supports_generic_structs() {
     use std::marker::PhantomData;
 
-    let architecture = ArchitectureBuilder::new("Test")
+    let architecture = ArchitectureBuilder::new()
         .model(GenericModel::<u32> {
             arch: ArchRef::new(),
             payload: PhantomData,
@@ -260,7 +260,7 @@ fn derive_supports_generic_structs() {
 
 #[test]
 fn registered_count_reflects_registrations() {
-    let architecture = ArchitectureBuilder::new("Test")
+    let architecture = ArchitectureBuilder::new()
         .model(CounterModel::default())
         .system(CounterSystem::default())
         .build();
@@ -270,7 +270,7 @@ fn registered_count_reflects_registrations() {
 
 #[test]
 fn builder_patch_runs_after_registrations_and_before_init() {
-    let architecture = ArchitectureBuilder::new("Test")
+    let architecture = ArchitectureBuilder::new()
         .model(CounterModel::default())
         .patch(|architecture| {
             // patch 期间：注册已完成，但两阶段初始化还没开始
@@ -288,13 +288,13 @@ fn builder_patch_runs_after_registrations_and_before_init() {
 #[test]
 #[should_panic(expected = "尚未注册到 IOCContainer")]
 fn get_model_panics_with_readable_message() {
-    let architecture = ArchitectureBuilder::new("Test").build();
+    let architecture = ArchitectureBuilder::new().build();
     let _ = architecture.get_model::<CounterModel>();
 }
 
 #[test]
 fn send_event_default_uses_default_value() {
-    let architecture = ArchitectureBuilder::new("Test").build();
+    let architecture = ArchitectureBuilder::new().build();
 
     let received = Rc::new(Cell::new(-1));
     let sink = Rc::clone(&received);
@@ -311,7 +311,7 @@ struct DefaultEvent(i32);
 
 #[test]
 fn unregister_list_auto_unregisters_on_drop() {
-    let architecture = ArchitectureBuilder::new("Test").build();
+    let architecture = ArchitectureBuilder::new().build();
 
     {
         let mut subscriptions = IUnRegisterList::new();

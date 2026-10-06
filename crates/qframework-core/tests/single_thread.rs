@@ -40,7 +40,7 @@ impl IQuery for LocalQuery {
 
 #[test]
 fn layers_commands_and_results_accept_single_thread_objects() {
-    let architecture = ArchitectureBuilder::new("Local")
+    let architecture = ArchitectureBuilder::new()
         .model(LocalModel::<String>::default())
         .system(LocalSystem::default())
         .utility(LocalUtility::default())

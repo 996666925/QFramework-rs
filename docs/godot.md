@@ -46,7 +46,7 @@ struct GameApp;
 
 impl QApplication for GameApp {
     fn build() -> ArchitectureBuilder {
-        ArchitectureBuilder::new("GameApp").model(PlayerModel::default())
+        ArchitectureBuilder::new().model(PlayerModel::default())
     }
 }
 ```

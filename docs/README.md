@@ -82,7 +82,7 @@ impl IQuery for GetCountQuery {
 struct CountChangedEvent { count: i32 }
 
 fn main() {
-    let architecture = ArchitectureBuilder::new("CounterApp")
+    let architecture = ArchitectureBuilder::new()
         .model(CounterModel::default())
         .build();
 

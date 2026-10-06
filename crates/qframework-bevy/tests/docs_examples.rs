@@ -356,7 +356,7 @@ fn check_bindable_collections() {
 // --- IUnRegister ----------------------------------------------------------
 
 fn check_unregister() {
-    let architecture = ArchitectureBuilder::new("Unregister").build();
+    let architecture = ArchitectureBuilder::new().build();
 
     let un = architecture.register_event::<GameStartedEvent, _>(|_| {});
     un.unregister();
@@ -374,7 +374,7 @@ fn check_unregister() {
 // --- Architecture 其它 API -------------------------------------------------
 
 fn check_architecture_api() {
-    let architecture = ArchitectureBuilder::new("Api")
+    let architecture = ArchitectureBuilder::new()
         .utility(SaveUtility)
         .model(PlayerModel::default())
         .system(AchievementSystem::default())
@@ -384,13 +384,12 @@ fn check_architecture_api() {
         })
         .build();
 
-    assert_eq!(architecture.name(), "Api");
     assert!(architecture.is_inited());
     assert_eq!(architecture.registered_count(), 4);
     assert!(architecture.try_get_system::<DebugPanelSystem>().is_some());
 
     // 重复注册同一类型会覆盖先注册的实例
-    let replaced = ArchitectureBuilder::new("Replaced")
+    let replaced = ArchitectureBuilder::new()
         .model(PlayerModel::default())
         .model(PlayerModel::default())
         .build();
@@ -416,7 +415,7 @@ fn check_architecture_api() {
     controller.send_command(AddGoldCommand { amount: 5 });
     let _ = controller.send_query(GetInventoryQuery);
     let _un = controller.register_event::<GameStartedEvent, _>(|_| {});
-    assert_eq!(controller.architecture().name(), "Api");
+    assert!(controller.architecture().is_inited());
 
     architecture.deinit();
     assert!(!architecture.is_inited());
@@ -459,7 +458,7 @@ struct CounterApp;
 
 impl QApplication for CounterApp {
     fn build() -> ArchitectureBuilder {
-        ArchitectureBuilder::new("CounterApp")
+        ArchitectureBuilder::new()
             .utility(SaveUtility)
             .model(CounterModel::default())
     }
@@ -538,7 +537,7 @@ fn check_manual_impl() {
     let manual = ManualModel::default();
     assert!(!manual.arch.is_bound());
 
-    let architecture = ArchitectureBuilder::new("Manual")
+    let architecture = ArchitectureBuilder::new()
         .model(ManualModel::default())
         .build();
     assert!(architecture.get_model::<ManualModel>().arch.is_bound());

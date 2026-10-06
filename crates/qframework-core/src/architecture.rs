@@ -25,13 +25,12 @@ type BoxedRegistration = Box<dyn FnOnce(&Rc<Architecture>)>;
 /// 应用架构。通常通过 [`ArchitectureBuilder`] 创建。
 ///
 /// ```ignore
-/// let architecture = ArchitectureBuilder::new("CounterApp")
+/// let architecture = ArchitectureBuilder::new()
 ///     .model(CounterModel::default())
 ///     .system(CounterSystem::default())
 ///     .build();
 /// ```
 pub struct Architecture {
-    name: &'static str,
     ioc: RefCell<IOCContainer>,
     events: TypeEventSystem,
     inited: Cell<bool>,
@@ -43,9 +42,8 @@ pub struct Architecture {
 }
 
 impl Architecture {
-    fn new(name: &'static str) -> Self {
+    fn new() -> Self {
         Self {
-            name,
             ioc: RefCell::new(IOCContainer::new()),
             events: TypeEventSystem::new(),
             inited: Cell::new(false),
@@ -55,11 +53,6 @@ impl Architecture {
             model_deinits: RefCell::new(Vec::new()),
             system_deinits: RefCell::new(Vec::new()),
         }
-    }
-
-    /// 架构名称。
-    pub fn name(&self) -> &'static str {
-        self.name
     }
 
     /// 是否已经完成初始化。
@@ -295,7 +288,6 @@ fn run_all(queue: &RefCell<Vec<BoxedLifecycle>>) {
 impl std::fmt::Debug for Architecture {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Architecture")
-            .field("name", &self.name)
             .field("inited", &self.is_inited())
             .field("registered", &self.registered_count())
             .finish()
@@ -303,18 +295,15 @@ impl std::fmt::Debug for Architecture {
 }
 
 /// 架构构建器：注册所有层对象，并产出共享的 [`Architecture`]。
+#[derive(Default)]
 pub struct ArchitectureBuilder {
-    name: &'static str,
     registrations: Vec<BoxedRegistration>,
 }
 
 impl ArchitectureBuilder {
     /// 创建构建器。
-    pub fn new(name: &'static str) -> Self {
-        Self {
-            name,
-            registrations: Vec::new(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// 注册一个 Model。
@@ -347,7 +336,7 @@ impl ArchitectureBuilder {
     /// `utility` 之后、两阶段初始化之前执行，适合按需注册可选模块。
     ///
     /// ```ignore
-    /// let architecture = ArchitectureBuilder::new("MyApp")
+    /// let architecture = ArchitectureBuilder::new()
     ///     .model(PlayerModel::default())
     ///     .patch(|architecture| {
     ///         if enable_debug_panel {
@@ -372,7 +361,7 @@ impl ArchitectureBuilder {
     }
 
     pub(crate) fn create(&self) -> Rc<Architecture> {
-        let architecture = Rc::new(Architecture::new(self.name));
+        let architecture = Rc::new(Architecture::new());
         let _ = architecture.self_ref.set(Rc::downgrade(&architecture));
         architecture
     }
@@ -389,7 +378,6 @@ impl ArchitectureBuilder {
 impl std::fmt::Debug for ArchitectureBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ArchitectureBuilder")
-            .field("name", &self.name)
             .field("registrations", &self.registrations.len())
             .finish()
     }

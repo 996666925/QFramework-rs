@@ -187,7 +187,7 @@ impl ICommand for IncreaseCountCommand {
 struct CountChangedEvent { count: i32 }
 
 fn main() {
-    let architecture = ArchitectureBuilder::new("CounterApp")
+    let architecture = ArchitectureBuilder::new()
         .model(CounterModel::default())
         .build();
 
@@ -234,7 +234,7 @@ struct CounterApp;
 
 impl QApplication for CounterApp {
     fn build() -> ArchitectureBuilder {
-        ArchitectureBuilder::new("CounterApp").model(CounterModel::default())
+        ArchitectureBuilder::new().model(CounterModel::default())
     }
 }
 
@@ -332,7 +332,7 @@ Model / Command / System 在任意位置触发。桥接插件的工作方式是�
 在所有 `model` / `system` / `utility` 之后、初始化之前执行：
 
 ```rust
-let architecture = ArchitectureBuilder::new("MyApp")
+let architecture = ArchitectureBuilder::new()
     .model(PlayerModel::default())
     .patch(|architecture| {
         if enable_debug_panel {

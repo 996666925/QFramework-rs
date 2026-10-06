@@ -90,8 +90,8 @@ mod tests {
     #[test]
     fn binding_is_idempotent_and_rejects_replacement() {
         let reference = ArchRef::new();
-        let architecture = ArchitectureBuilder::new("One").build();
-        let other = ArchitectureBuilder::new("Two").build();
+        let architecture = ArchitectureBuilder::new().build();
+        let other = ArchitectureBuilder::new().build();
         assert_eq!(bind_reference(&reference, &architecture), Ok(()));
         assert_eq!(bind_reference(&reference, &architecture), Ok(()));
         assert_eq!(
@@ -104,17 +104,17 @@ mod tests {
     #[test]
     fn rejects_deinited_and_expired_architectures() {
         let reference = ArchRef::new();
-        let architecture = ArchitectureBuilder::new("One").build();
+        let architecture = ArchitectureBuilder::new().build();
         architecture.deinit();
         assert_eq!(
             bind_reference(&reference, &architecture),
             Err(BindArchitectureError::NotInitialized)
         );
 
-        let live = ArchitectureBuilder::new("Live").build();
+        let live = ArchitectureBuilder::new().build();
         assert_eq!(bind_reference(&reference, &live), Ok(()));
         drop(live);
-        let replacement = ArchitectureBuilder::new("Replacement").build();
+        let replacement = ArchitectureBuilder::new().build();
         assert_eq!(
             bind_reference(&reference, &replacement),
             Err(BindArchitectureError::AlreadyBound)

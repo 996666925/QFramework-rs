@@ -19,7 +19,7 @@
 //!
 //! impl QApplication for MyApp {
 //!     fn build() -> ArchitectureBuilder {
-//!         ArchitectureBuilder::new("MyApp").model(MyModel::default())
+//!         ArchitectureBuilder::new().model(MyModel::default())
 //!     }
 //! }
 //!
