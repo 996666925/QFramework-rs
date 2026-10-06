@@ -42,14 +42,13 @@ qframework/
 │   └── qframework-bevy/           # Bevy 集成层
 │       ├── src/
 │       │   ├── app.rs             # QFrameworkPlugin / QArchitecture / QApplication
-│       │   ├── bridge.rs          # QFramework 事件 -> Bevy Message 桥接
-│       │   └── controller.rs      # 控制器每帧调度
+│       │   └── bridge.rs          # QFramework 事件 -> Bevy Message 桥接
 │       ├── examples/bevy_counter.rs
 │       └── tests/
 │           ├── integration.rs     # Bevy 集成测试
 │           └── docs_examples.rs   # 文档代码片段校验
 └── examples/
-    └── mini_game/                 # 完整示例工程（六种角色全部参与）
+    └── mini_game/                 # 完整示例工程（业务架构 + Bevy 表现层）
 ```
 
 ---
@@ -63,14 +62,14 @@ qframework/
 | [架构总览](docs/architecture.md) | 四层职责、依赖规则表、CQRS、与 Bevy ECS 的关系、与 C# 版的差异 |
 | [核心概念](docs/core-concepts.md) | `Architecture`、IOC、事件系统、Command/Query、可观察容器、生命周期总表 |
 | [派生宏](docs/derive-macros.md) | 四个派生宏的完整规则、`arch` 字段、生命周期钩子、展开后的代码、常见错误 |
-| [Bevy 集成](docs/bevy.md) | 插件安装、资源访问、控制器调度、消息桥接、系统排序、无窗口测试 |
+| [Bevy 集成](docs/bevy.md) | 插件安装、资源访问、表现层系统、消息桥接、系统排序、无窗口测试 |
 | [最佳实践](docs/best-practices.md) | 推荐写法、并发注意事项、性能、测试策略、命名与目录约定、反模式清单 |
 | [排错手册](docs/troubleshooting.md) | 编译错误、运行时 panic、死锁、事件收不到、Bevy 相关问题 |
 
 **第一次上手**：本页的[快速开始](#快速开始纯-rust) → [架构总览](docs/architecture.md) → [最佳实践](docs/best-practices.md)。
 
 想直接看一个跑得起来的完整项目？[`examples/mini_game`](examples/mini_game/README.md)
-把六种角色全部用上了（含 Bevy 集成、事件桥接、控制器调度），`cargo run -p mini-game` 即可运行。
+演示业务架构、事件桥接和 Bevy 表现层系统，`cargo run -p mini-game` 即可运行。
 
 ---
 
@@ -241,8 +240,8 @@ impl QApplication for CounterApp {
 fn main() {
     App::new()
         .add_plugins(MinimalPlugins)
-        .add_qframework::<CounterApp>()                       // 安装架构
-        .bridge_q_messages::<CountChangedMessage>()           // QFramework 事件 -> Bevy 消息
+        .install_architecture::<CounterApp>()                 // 安装架构
+        .bridge_messages::<CountChangedMessage>()             // QFramework 事件 -> Bevy 消息
         .add_systems(Update, read_messages)
         .run();
 }
@@ -272,29 +271,22 @@ cargo run -p qframework-bevy --example bevy_counter
 
 ---
 
-## 控制器：让 IController 跟着 Bevy 帧循环跑
+## 表现层：直接使用 Bevy 系统
 
 ```rust
-#[derive(Default, IController)]
-struct CounterController {
-    arch: ArchRef,
-    frames: AtomicI32,
-}
-
-impl QControllerUpdate for CounterController {
-    fn update(&self, _delta: Duration) {
-        if self.frames.fetch_add(1, Ordering::SeqCst) < 3 {
-            self.send_command(IncreaseCountCommand);
-        }
+fn increase_count(architecture: Res<QArchitecture>, mut frames: Local<u32>) {
+    if *frames < 3 {
+        architecture.send_command(IncreaseCountCommand);
     }
+    *frames += 1;
 }
 
-// 注册后，控制器会在 `QFrameworkSet::Controllers` 中每帧被驱动
-app.add_q_controller(CounterController::default());
+app.add_systems(Update, (increase_count, read_messages).chain());
 ```
 
-控制器调度在 `Update` 的 `QFrameworkSet::Controllers` 集合中执行，
-其他系统可以用 `.before(...)` / `.after(QFrameworkSet::Controllers)` 精确排序。
+Bevy 系统可以直接使用 `Query`、`Commands` 和 Resource 操作场景、输入与 UI。
+用 `.chain()`、`.before(...)` / `.after(...)` 或自定义 `SystemSet` 排序。
+核心库的 `IController` 保留给非 Bevy 场景，生命周期由调用方管理。
 
 ---
 
@@ -340,7 +332,7 @@ QFramework 原本面向 Unity 主线程，而这里的代码很可能跑在 Bevy
 反初始化顺序相反：System → Model → 清空 IOC 与事件。
 
 `deinit` 是**终态**操作：调用之后架构不可再使用（`get_model` 等会 panic），重复调用是安全的。
-在 Bevy 中由 `QFrameworkPlugin` 的 `cleanup` 自动触发，控制器也会在此时收到 `IController::deinit`。
+在 Bevy 中由 `QFrameworkPlugin` 的 `cleanup` 钩子触发；手动推进帧时，使用完架构后调用 `app.cleanup()`。
 
 如果需要按条件注册可选模块，用 `patch`——它对应 C# 版的 `OnRegisterPatch`，
 在所有 `model` / `system` / `utility` 之后、初始化之前执行：

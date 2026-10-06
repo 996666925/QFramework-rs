@@ -12,7 +12,7 @@
 | [架构总览](architecture.md) | 四层职责、依赖规则、CQRS、与 Bevy ECS 的关系 | 上手前，建立心智模型 |
 | [核心概念](core-concepts.md) | `Architecture`、IOC、事件系统、Command/Query、可观察容器、生命周期 | 写代码时当参考手册 |
 | [派生宏](derive-macros.md) | `#[derive(IModel)]` 等四个宏的完整规则与限制 | 定义层对象时 |
-| [Bevy 集成](bevy.md) | 插件、资源、控制器调度、消息桥接、系统排序、无窗口测试 | 在 Bevy 项目里落地时 |
+| [Bevy 集成](bevy.md) | 插件、资源、表现层系统、消息桥接、系统排序、无窗口测试 | 在 Bevy 项目里落地时 |
 | [最佳实践](best-practices.md) | 推荐写法、反模式、命名约定、性能与测试策略 | **写业务代码前必读** |
 | [排错手册](troubleshooting.md) | 编译错误、运行时 panic、死锁、事件收不到 | 遇到问题时 |
 
@@ -25,7 +25,7 @@
 1. [架构总览](architecture.md) —— 先搞懂「为什么要分层」
 2. 根目录 [README 的快速开始](../README.md#快速开始纯-rust)
 3. `cargo run -p qframework-core --example counter` 跑起来看输出
-4. [`examples/mini_game`](../examples/mini_game/README.md) —— 完整示例工程，六种角色全用上
+4. [`examples/mini_game`](../examples/mini_game/README.md) —— 完整示例工程，业务架构与 Bevy 表现层配合
 5. [最佳实践](best-practices.md) —— 避免踩坑
 
 **我要在 Bevy 项目里用**
@@ -96,9 +96,8 @@ fn main() {
 ```rust
 App::new()
     .add_plugins(MinimalPlugins)
-    .add_qframework::<CounterApp>()                  // 安装架构
-    .bridge_q_messages::<CountChangedMessage>()      // QFramework 事件 -> Bevy 消息
-    .add_q_controller(CounterController::default())  // 每帧驱动控制器
+    .install_architecture::<CounterApp>()            // 安装架构
+    .bridge_messages::<CountChangedMessage>()        // QFramework 事件 -> Bevy 消息
     .add_systems(Update, read_messages)
     .run();
 ```

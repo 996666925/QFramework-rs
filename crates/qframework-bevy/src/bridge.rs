@@ -8,7 +8,7 @@
 //! 3. 其他系统照常使用 `MessageReader<M>`。
 //!
 //! ```ignore
-//! app.bridge_q_messages::<CountChangedMessage>();
+//! app.bridge_messages::<CountChangedMessage>();
 //!
 //! fn on_count_changed(mut reader: MessageReader<CountChangedMessage>) {
 //!     for message in reader.read() {
@@ -113,12 +113,12 @@ impl<M: Message + Clone> Plugin for QEventBridgePlugin<M> {
 
         app.add_message::<M>();
         app.insert_resource(bridge);
-        app.add_systems(PreUpdate, forward_q_messages::<M>);
+        app.add_systems(PreUpdate, forward_messages::<M>);
     }
 }
 
 /// 把队列中的事件写入 Bevy 的 `Messages<M>`。
-pub(crate) fn forward_q_messages<M: Message + Clone>(
+pub(crate) fn forward_messages<M: Message + Clone>(
     bridge: Res<QEventBridge<M>>,
     mut writer: MessageWriter<M>,
 ) {

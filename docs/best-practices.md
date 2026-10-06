@@ -435,18 +435,14 @@ let un = self.get_model::<PlayerModel>()
 self.subscriptions.lock().unwrap().add(un);
 ```
 
-### 6.4 每帧一次的控制器里别做全量重算
+### 6.4 每帧执行的表现层系统里别做全量重算
 
 ```rust
-impl QControllerUpdate for BoardController {
-    fn update(&self, _delta: Duration) {
-        // ❌ 每帧把整个棋盘重算一遍
-        self.rebuild_board();
-
-        // ✓ 只在脏标记为真时重算
-        if self.dirty.swap(false, Ordering::SeqCst) {
-            self.rebuild_board();
-        }
+fn refresh_board(mut board: ResMut<BoardView>) {
+    // 只在脏标记为真时重算
+    if board.dirty {
+        board.rebuild();
+        board.dirty = false;
     }
 }
 ```
@@ -525,7 +521,7 @@ let un = architecture.register_event::<GameStartedEvent, _>(move |_| {
 | 层次 | 工具 | 覆盖什么 | 占比 |
 |---|---|---|---|
 | 纯逻辑测试 | `ArchitectureBuilder` + `send_command` | 规则、数值、状态流转 | ~80% |
-| Bevy 集成测试 | `MinimalPlugins` + `app.update()` | 桥接、控制器、系统排序 | ~15% |
+| Bevy 集成测试 | `MinimalPlugins` + `app.update()` | 桥接、场景组件、系统排序 | ~15% |
 | 端到端 | 手动 / 录屏 | 手感、表现 | ~5% |
 
 **大部分测试不应该依赖 Bevy。** 这是把架构和引擎解耦的最大回报：
@@ -607,7 +603,7 @@ src/
 │   └── shop.rs           # 按功能域聚合，不按类型拆
 ├── query/
 │   └── inventory.rs
-├── controller/
+├── controller/           # Bevy 系统承担表现层职责
 │   └── hud.rs
 ├── utility/
 │   └── save.rs
@@ -669,7 +665,7 @@ impl QApplication for MyGame {
 
 ## 下一步
 
-- 把这些约定落到代码里 → [`examples/mini_game`](../examples/mini_game/README.md)（六种角色全部参与的完整示例）
+- 把这些约定落到代码里 → [`examples/mini_game`](../examples/mini_game/README.md)（业务架构与 Bevy 表现层的完整示例）
 - 遇到报错 → [排错手册](troubleshooting.md)
 - 查具体 API → [核心概念](core-concepts.md)
 - Bevy 相关细节 → [Bevy 集成](bevy.md)

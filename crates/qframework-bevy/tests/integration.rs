@@ -1,7 +1,3 @@
-use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
-
 use bevy::prelude::*;
 use qframework_bevy::prelude::*;
 
@@ -51,7 +47,10 @@ impl QApplication for TestApp {
 #[derive(Resource, Default)]
 struct Observed(Vec<i32>);
 
-fn collect_messages(mut reader: MessageReader<CountChangedMessage>, mut observed: ResMut<Observed>) {
+fn collect_messages(
+    mut reader: MessageReader<CountChangedMessage>,
+    mut observed: ResMut<Observed>,
+) {
     for message in reader.read() {
         observed.0.push(message.count);
     }
@@ -60,8 +59,8 @@ fn collect_messages(mut reader: MessageReader<CountChangedMessage>, mut observed
 fn build_app() -> App {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
-        .add_qframework::<TestApp>()
-        .bridge_q_messages::<CountChangedMessage>()
+        .install_architecture::<TestApp>()
+        .bridge_messages::<CountChangedMessage>()
         .init_resource::<Observed>()
         .add_systems(Update, collect_messages);
     app
@@ -83,7 +82,7 @@ fn bevy_systems_can_send_commands() {
     let mut app = build_app();
 
     {
-        let architecture = app.world().resource::<QArchitecture>().arc();
+        let architecture = app.architecture();
         architecture.send_command(IncreaseCountCommand);
         architecture.send_command(IncreaseCountCommand);
     }
@@ -112,28 +111,29 @@ fn qframework_events_become_bevy_messages() {
     assert_eq!(observed.0, vec![1, 2]);
 }
 
-#[derive(Default, IController)]
-struct TickController {
-    arch: ArchRef,
-    ticks: AtomicI32,
+#[derive(Component, Default)]
+struct DisplayedCount(i32);
+
+fn tick(architecture: Res<QArchitecture>, mut ticks: Local<u32>) {
+    if *ticks < 4 {
+        architecture.send_command(IncreaseCountCommand);
+        *ticks += 1;
+    }
 }
 
-impl QControllerUpdate for TickController {
-    fn update(&self, _delta: Duration) {
-        if self.ticks.fetch_add(1, Ordering::SeqCst) < 4 {
-            self.send_command(IncreaseCountCommand);
-        }
+fn refresh_scene(architecture: Res<QArchitecture>, mut nodes: Query<&mut DisplayedCount>) {
+    for mut node in &mut nodes {
+        node.0 = architecture.send_query(GetCountQuery);
     }
 }
 
 #[test]
-fn controllers_are_driven_every_frame() {
+fn bevy_systems_update_scene_from_architecture() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
-        .add_qframework::<TestApp>()
-        .add_q_controller(TickController::default());
-
-    assert_eq!(app.world().resource::<QControllers>().len(), 1);
+        .install_architecture::<TestApp>()
+        .add_systems(Update, (tick, refresh_scene).chain());
+    let node = app.world_mut().spawn(DisplayedCount::default()).id();
 
     for _ in 0..5 {
         app.update();
@@ -141,19 +141,7 @@ fn controllers_are_driven_every_frame() {
 
     let architecture = app.world().resource::<QArchitecture>();
     assert_eq!(architecture.send_query(GetCountQuery), 4);
-}
-
-#[derive(IController)]
-#[controller(deinit = |this: &DeinitTrackingController| {
-    this.deinits.fetch_add(1, Ordering::SeqCst);
-})]
-struct DeinitTrackingController {
-    arch: ArchRef,
-    deinits: Arc<AtomicI32>,
-}
-
-impl QControllerUpdate for DeinitTrackingController {
-    fn update(&self, _delta: Duration) {}
+    assert_eq!(app.world().get::<DisplayedCount>(node).unwrap().0, 4);
 }
 
 struct OtherApp;
@@ -169,25 +157,21 @@ impl QApplication for OtherApp {
 fn only_one_qframework_plugin_is_allowed() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
-        .add_qframework::<TestApp>()
-        .add_qframework::<OtherApp>();
+        .install_architecture::<TestApp>()
+        .install_architecture::<OtherApp>();
 }
 
 #[test]
-fn controllers_are_deinited_on_cleanup() {
+fn architecture_is_deinited_on_cleanup() {
     let mut app = App::new();
-    app.add_plugins(MinimalPlugins).add_qframework::<TestApp>();
-
-    let deinits = Arc::new(AtomicI32::new(0));
-    app.add_q_controller(DeinitTrackingController {
-        arch: ArchRef::new(),
-        deinits: Arc::clone(&deinits),
-    });
+    app.add_plugins(MinimalPlugins)
+        .install_architecture::<TestApp>();
 
     app.update();
-    assert_eq!(deinits.load(Ordering::SeqCst), 0);
+    let architecture = app.architecture();
+    assert!(architecture.is_inited());
 
-    // 模拟 Bevy 在应用退出时调用 Plugin::cleanup
     app.cleanup();
-    assert_eq!(deinits.load(Ordering::SeqCst), 1);
+    assert!(!architecture.is_inited());
+    assert!(architecture.try_get_model::<CounterModel>().is_none());
 }

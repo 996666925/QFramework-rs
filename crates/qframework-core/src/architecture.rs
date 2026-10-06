@@ -167,8 +167,8 @@ impl Architecture {
 
     /// 绑定一个 Controller（Controller 不进入 IOC 容器，只注入架构引用）。
     ///
-    /// 在 Bevy 中通常交给 `App::add_q_controller` 处理：它会调用本方法完成绑定，
-    /// 再把控制器交给 `QControllers` 每帧调度。
+    /// 调用方负责控制器的初始化、运行和反初始化。
+    /// Bevy 表现层通常直接使用系统，无需绑定控制器对象。
     pub fn attach_controller<C: IController>(&self, controller: C) -> Arc<C> {
         let controller = Arc::new(controller);
         controller.arch_ref().set(&self.arc());

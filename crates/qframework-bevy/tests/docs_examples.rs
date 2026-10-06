@@ -9,7 +9,6 @@
 #![allow(dead_code)] // 示例里有大量只用于展示的类型与字段
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -71,9 +70,7 @@ struct MyService {
 
 impl MyService {
     fn new() -> Self {
-        Self {
-            name: "svc".into(),
-        }
+        Self { name: "svc".into() }
     }
 }
 
@@ -168,9 +165,12 @@ struct HudController {
 
 impl HudController {
     fn start(&self) {
-        let un = self.get_model::<PlayerModel>().hp.register_with_init_value(|hp| {
-            println!("HP: {hp}");
-        });
+        let un = self
+            .get_model::<PlayerModel>()
+            .hp
+            .register_with_init_value(|hp| {
+                println!("HP: {hp}");
+            });
         self.subscriptions.lock().unwrap().add(un);
 
         let un = self.register_event::<DamageTakenEvent, _>(|event| {
@@ -449,39 +449,11 @@ impl ICommand for IncreaseCountCommand {
     }
 }
 
-#[derive(IController)]
-#[controller(init = Self::start)]
-struct CounterController {
-    arch: ArchRef,
-    frames: AtomicI32,
-    subscriptions: Mutex<IUnRegisterList>,
-}
-
-impl Default for CounterController {
-    fn default() -> Self {
-        Self {
-            arch: ArchRef::new(),
-            frames: AtomicI32::new(0),
-            subscriptions: Mutex::new(IUnRegisterList::new()),
-        }
+fn tick_counter(architecture: Res<QArchitecture>, mut frames: Local<u32>) {
+    if (*frames).is_multiple_of(60) {
+        architecture.send_command(IncreaseCountCommand);
     }
-}
-
-impl CounterController {
-    fn start(&self) {
-        let un = self.register_event::<CountChangedMessage, _>(|event| {
-            println!("count -> {}", event.count);
-        });
-        self.subscriptions.lock().unwrap().add(un);
-    }
-}
-
-impl QControllerUpdate for CounterController {
-    fn update(&self, _delta: Duration) {
-        if self.frames.fetch_add(1, Ordering::SeqCst) % 60 == 0 {
-            self.send_command(IncreaseCountCommand);
-        }
-    }
+    *frames += 1;
 }
 
 struct CounterApp;
@@ -515,22 +487,19 @@ fn peek(bridge: Res<QEventBridge<CountChangedMessage>>) {
 fn check_bevy() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
-        .add_qframework::<CounterApp>()
-        .bridge_q_messages::<CountChangedMessage>()
-        .add_q_controller(CounterController::default())
-        .add_systems(Update, on_count_changed)
-        .add_systems(Update, refresh_ui.after(QFrameworkSet::Controllers))
+        .install_architecture::<CounterApp>()
+        .bridge_messages::<CountChangedMessage>()
+        .add_systems(Update, (tick_counter, refresh_ui, on_count_changed).chain())
         .add_systems(PreUpdate, peek);
 
     app.update();
 
-    let controllers = app.world().resource::<QControllers>();
-    assert_eq!(controllers.len(), 1);
-    assert!(!controllers.is_empty());
-    let _count = controllers.iter().count();
+    assert_eq!(
+        app.architecture().get_model::<CounterModel>().count.get(),
+        1
+    );
     let _handle: Arc<Architecture> = app.world().resource::<QArchitecture>().arc();
 
-    let _ = &controllers;
     app.cleanup();
 }
 

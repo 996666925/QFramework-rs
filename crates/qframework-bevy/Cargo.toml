@@ -1,6 +1,6 @@
 [package]
 name = "qframework-bevy"
-description = "QFramework 的 Bevy 集成层：插件、资源、消息桥接与控制器调度"
+description = "QFramework 的 Bevy 集成层：架构插件、资源与消息桥接"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

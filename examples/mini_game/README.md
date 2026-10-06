@@ -1,6 +1,6 @@
 # QFramework 迷你地牢
 
-一个「从零开始、六种角色全部参与」的完整示例工程。无窗口运行，剧本由控制器驱动，
+一个「从零开始、业务架构与 Bevy 表现层配合」的完整示例工程。无窗口运行，剧本由 Bevy 系统驱动，
 可以直接 `cargo run` 看到完整的一局游戏。
 
 ```bash
@@ -18,16 +18,16 @@ cargo run -p mini-game
 | 命令 `ICommand` | [`src/command`](src/command) | `BuyItemCommand`、`PlayerAttackCommand`、`UseItemCommand`、`StartGameCommand` |
 | 查询 `IQuery` | [`src/query`](src/query) | `GetPlayerSnapshotQuery`、`GetInventoryQuery` |
 | 业务逻辑层 `ISystem` | [`src/system`](src/system) | `AchievementSystem`（跨 Model 协调）、`AutoSaveSystem`（Model + Utility） |
-| 表现层 `IController` | [`src/controller`](src/controller) | `HudController`（状态 → 表现）、`ScriptController`（输入 → 命令） |
+| Bevy 表现层 | [`src/controller`](src/controller) | `render_hud`（状态 → 表现）、`run_script`（输入 → 命令） |
 
 另外还演示了：
 
-- **Bevy 集成**：`add_qframework` / `bridge_q_messages` / `add_q_controller`
+- **Bevy 集成**：`install_architecture` / `bridge_messages` / `add_systems`
 - **事件桥接**：`EnemyDefeatedEvent` 同时是 QFramework 事件和 Bevy 消息
 - **数据绑定**：`register_with_init_value` 一次搞定「初值 + 后续变化」
 - **脏标记 + 内容比对**：状态栏不会因为意义相同的通知而重复输出
 - **生命周期钩子**：`#[model(init = Self::stock)]`、`#[system(init = Self::subscribe)]`
-- **分层约束**：`IController` 不能发事件、不能取 Utility；`IModel` 不能取别的 Model
+- **分层约束**：`IModel` 不能取别的 Model；Bevy 表现层通过 Command 表达业务意图
 
 ---
 
@@ -79,7 +79,7 @@ mini_game/
 
 ## 剧本
 
-`ScriptController` 每 4 帧执行一步：
+`run_script` 每 4 帧执行一步，进度由 `Local<ScriptState>` 保存：
 
 1. **开始游戏** — `StartGameCommand` 广播 `GameStartedEvent`
 2. **买两瓶药水** — 花费 60 金币（100 → 40），解锁「有备无患」「大客户」
@@ -155,12 +155,12 @@ mini_game/
 
 ```rust
 // src/controller/script.rs
-// 表现层只发命令；它甚至没有「发送事件」的能力
-self.send_command(BuyItemCommand { item: ItemId::HealthPotion, quantity: 2 });
+// 表现层通过命令表达购买意图
+architecture.send_command(BuyItemCommand { item: ItemId::HealthPotion, quantity: 2 });
 ```
 
-而「开始游戏时广播事件」这件事必须由一个命令完成（`StartGameCommand`）——
-因为 `IController` 没有 `ICanSendEvent` 能力，写 `self.send_event(...)` 是编译错误。
+「开始游戏时广播事件」由 `StartGameCommand` 完成，输入系统只表达开始游戏的意图。
+Bevy 系统通过 `QArchitecture` 可以访问全部架构 API，这里的业务边界是约定，而不是核心 `IController` 的编译期能力限制。
 
 ### 2. 跨 Model 的规则放哪里
 
@@ -196,14 +196,16 @@ pub fn spend_gold(&self, amount: i32) -> bool {
 ### 5. 状态栏为什么不重复输出
 
 `set` / `modify` 不做相等判断，值没变也会通知，所以脏标记可能被无意义地置位。
-`HudController` 除了脏标记之外还比对了渲染内容：
+`render_hud` 除了脏标记之外还比对了 `HudState` 中保存的渲染内容：
 
 ```rust
-let mut last = self.last_rendered.lock().unwrap();
-if *last == line {
+if hud.last_rendered == line {
     return;   // 内容一样就不重复打印
 }
 ```
+
+`setup_hud` 在 `Startup` 中注册订阅，句柄存放在 `HudState.subscriptions`。
+`HudState` 作为 Resource 析构时，`IUnRegisterList` 自动注销全部订阅，无需手动管理 Controller 生命周期。
 
 ---
 

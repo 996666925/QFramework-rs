@@ -1,11 +1,12 @@
 # Bevy 集成
 
-`qframework-bevy` 把四层架构接入 Bevy 0.19。它只做四件事：
+`qframework-bevy` 把业务架构接入 Bevy 0.19。它只做三件事：
 
 1. 把架构装成 Bevy 资源 `QArchitecture`；
-2. 让 `IController` 能跟着帧循环跑；
-3. 把 QFramework 事件桥接成 Bevy 消息；
-4. 应用退出时自动清理。
+2. 把 QFramework 事件桥接成 Bevy 消息；
+3. 清理架构（由插件的 `cleanup` 钩子执行）。
+
+表现层直接使用 Bevy 系统，输入、场景节点和 UI 通过 `Query`、`Commands`、Resource 访问。
 
 ---
 
@@ -53,9 +54,8 @@ impl QApplication for MyGame {
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_qframework::<MyGame>()               // 安装架构（必须最先）
-        .bridge_q_messages::<HpChangedMessage>()  // 可选：事件桥接
-        .add_q_controller(HudController::default())// 可选：注册控制器
+        .install_architecture::<MyGame>()         // 安装架构（必须最先）
+        .bridge_messages::<HpChangedMessage>()    // 可选：事件桥接
         .add_systems(Update, sync_camera)
         .run();
 }
@@ -65,9 +65,8 @@ fn main() {
 
 | 调用 | 要求 |
 |---|---|
-| `add_qframework` | 每个 App 只能调用一次（第二次会 panic，避免架构被静默覆盖） |
-| `bridge_q_messages` | 必须在 `add_qframework` **之后** |
-| `add_q_controller` | 必须在 `add_qframework` **之后** |
+| `install_architecture` | 每个 App 只能调用一次（第二次会 panic，避免架构被静默覆盖） |
+| `bridge_messages` | 必须在 `install_architecture` **之后** |
 
 也可以直接 `.add_plugins(QFrameworkPlugin::<MyGame>::default())`，效果相同。
 
@@ -77,17 +76,14 @@ fn main() {
 fn build(&self, app: &mut App) {
     let architecture = A::build().build();      // 注册 + 两阶段初始化
     app.insert_resource(QArchitecture(architecture));
-    app.init_resource::<QControllers>();
-    app.add_systems(Update, run_controllers.in_set(QFrameworkSet::Controllers));
 }
 
 fn cleanup(&self, app: &mut App) {
-    controllers.deinit_all();                    // 控制器 deinit
     architecture.deinit();                       // System / Model deinit + 清空
 }
 ```
 
-`cleanup` 由 Bevy 在事件循环结束时调用（`App::run()` 之后）。
+`cleanup` 是 Bevy 的插件生命周期钩子。手动推进帧的无窗口示例在使用完架构后显式调用 `app.cleanup()`；若架构需要贯穿运行循环，应由应用在结束时安排清理。
 
 ---
 
@@ -122,89 +118,48 @@ let handle: Arc<Architecture> = architecture.arc();   // 或 QArchitecture::arc(
 
 ---
 
-## 五、控制器
+## 五、表现层使用 Bevy 系统
 
-QFramework 的 `IController` 在 Bevy 里变成一个「每帧更新的对象」。
-
-### 定义
+输入系统通过 Command 改变业务状态，展示系统通过 Query 或消息读取变化。
+场景节点由 Bevy 管理，系统可以直接查询节点的组件：
 
 ```rust
-#[derive(Default, IController)]
-#[controller(init = Self::start)]
-struct HudController {
-    arch: ArchRef,
-    frames: AtomicI32,
-    subscriptions: Mutex<IUnRegisterList>,
+#[derive(Component, Default)]
+struct DisplayedCount(i32);
+
+fn tick_counter(architecture: Res<QArchitecture>, mut frames: Local<u32>) {
+    if (*frames).is_multiple_of(60) {
+        architecture.send_command(IncreaseCountCommand);
+    }
+    *frames += 1;
 }
 
-impl HudController {
-    fn start(&self) {
-        // 注册事件订阅：IController 可以监听，但不能发送事件
-        let un = self.register_event::<HpChangedEvent, _>(|event| {
-            println!("HP -> {}", event.hp);
-        });
-        self.subscriptions.lock().unwrap().add(un);
+fn refresh_scene(
+    architecture: Res<QArchitecture>,
+    mut nodes: Query<&mut DisplayedCount>,
+) {
+    let count = architecture.get_model::<CounterModel>().count.get();
+    for mut node in &mut nodes {
+        node.0 = count;
     }
 }
 
-impl QControllerUpdate for HudController {
-    fn update(&self, delta: Duration) {
-        // 每帧被调用一次
-        if self.frames.fetch_add(1, Ordering::SeqCst) % 60 == 0 {
-            self.send_command(TickCommand { delta });
-        }
-    }
-}
+app.world_mut().spawn(DisplayedCount::default());
+app.add_systems(Update, (tick_counter, refresh_scene).chain());
 ```
 
-注意 `update` 接收的是 `&self`——控制器以 `Arc` 共享，**可变状态必须用内部可变性**（`Atomic*`、`Mutex`、`BindableProperty`）。
+`Local` 保存单个系统的跨帧状态；共享的表现状态使用 Resource。
+`.chain()` 保证输入逻辑先于展示刷新；也可以用 `.before(...)`、`.after(...)` 或自定义 `SystemSet` 排序。
+只有 `Res<QArchitecture>` 时，Bevy 不知道各系统通过内部锁访问了哪些 Model，需要业务顺序时应显式排序。
 
-### 注册
+### 订阅生命周期
 
-```rust
-app.add_q_controller(HudController::default());
-```
+优先用 `bridge_messages` 与 `MessageReader` 响应业务事件。
+直接订阅可绑定属性时，把 `IUnRegisterList` 保存在 Resource 或 Component 中，
+它随资源移除或实体销毁而析构，自动注销订阅。回调可以设置共享脏标记，实际 UI 修改在 Bevy 系统中执行。
+完整示例见 `examples/mini_game/src/controller/hud.rs`。
 
-`add_q_controller` 会依次：
-
-1. 调用 `Architecture::attach_controller` 注入架构引用；
-2. 调用 `IController::init`（如果有 `#[controller(init = ...)]` 钩子）；
-3. 把控制器放进 `QControllers` 资源，登记 `deinit` 回调。
-
-### 调度
-
-所有控制器在 `Update` 的 `QFrameworkSet::Controllers` 集合里更新：
-
-```rust
-// 让某个系统在控制器之后跑
-app.add_systems(Update, refresh_ui.after(QFrameworkSet::Controllers));
-
-// 某个系统必须最先跑
-app.add_systems(Update, read_input.before(QFrameworkSet::Controllers));
-
-// 只在特定状态下驱动控制器（需要 bevy_state feature）
-app.configure_sets(Update, QFrameworkSet::Controllers.run_if(in_state(GameState::Playing)));
-```
-
-### 手动管理
-
-不用 `add_q_controller` 也可以：
-
-```rust
-let architecture = app.world().resource::<QArchitecture>().arc();
-let controller = architecture.attach_controller(MyController::default());
-// 想怎么用就怎么用——不注册进 QControllers 就不会被每帧驱动
-```
-
-`QControllers` 的公开 API：
-
-| 方法 | 说明 |
-|---|---|
-| `add::<C>(Arc<C>)` | 加入并立即 `init`（要求已绑定架构） |
-| `len()` / `is_empty()` | 数量 |
-| `iter()` | 遍历 `&Arc<dyn QControllerUpdate>` |
-| `deinit_all()` | 依次调用 `IController::deinit` |
-| `clear()` | 清空（**不会**调用 deinit） |
+核心库的 `IController` 仍可用于非 Bevy 场景，绑定后的 `init`、运行和 `deinit` 由调用方管理。
 
 ---
 
@@ -219,7 +174,7 @@ QFramework 事件（任意位置触发）
         │  handler（注册在架构事件总线上）
         ▼
    Arc<Mutex<Vec<M>>> 队列
-        │  forward_q_messages（PreUpdate）
+        │  forward_messages（PreUpdate）
         ▼
    Bevy Messages<M>
         │  MessageReader<M>（Update）
@@ -245,8 +200,8 @@ impl PlayerModel {
 }
 
 // 3. 插件里注册桥接
-app.add_qframework::<MyGame>()
-   .bridge_q_messages::<HpChangedMessage>();
+app.install_architecture::<MyGame>()
+   .bridge_messages::<HpChangedMessage>();
 
 // 4. 在任意 Bevy 系统里读取
 fn on_hp_changed(mut reader: MessageReader<HpChangedMessage>) {
@@ -263,7 +218,7 @@ fn on_hp_changed(mut reader: MessageReader<HpChangedMessage>) {
 | 帧 | 阶段 | 发生的事 |
 |---|---|---|
 | N | Update | Model 发事件 → 入队 |
-| N+1 | PreUpdate | `forward_q_messages` → 写入 `Messages<M>` |
+| N+1 | PreUpdate | `forward_messages` → 写入 `Messages<M>` |
 | N+1 | Update | `MessageReader` 读到 |
 
 也就是说**从发送到被 Bevy 系统读到，中间隔了一帧**。做表现层时通常无所谓；做帧同步 / 精确回放时要注意这个偏移。
@@ -336,22 +291,22 @@ fn gold_decreases_after_purchase() {
 
 ```rust
 #[test]
-fn controllers_run_every_frame() {
+fn systems_run_every_frame() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)          // 包含 Time / TaskPool / FrameCount
-       .add_qframework::<MyGame>()
-       .add_q_controller(TickController::default());
+       .install_architecture::<MyGame>()
+       .add_systems(Update, tick_counter);
 
     app.update();
     app.update();
 
-    assert_eq!(app.world().resource::<QControllers>().len(), 1);
+    assert_eq!(app.architecture().get_model::<CounterModel>().count.get(), 1);
 }
 ```
 
 要点：
 
-- `MinimalPlugins` 提供 `TimePlugin`，所以控制器里的 `delta` 是可用的。
+- `MinimalPlugins` 提供 `TimePlugin`，系统可通过 `Res<Time>` 获取帧间隔。
 - **不要调用 `app.run()`**（会进入无限循环）；用 `app.update()` 手动推进帧。
 - 验证 `deinit` 行为可以直接调用 `app.cleanup()`，它会触发 `Plugin::cleanup`。
 - 想断言 Bevy 消息，读写之间要隔一次 `update()`（见上面的时序表）。
@@ -364,15 +319,15 @@ fn controllers_run_every_frame() {
 
 **`QEventBridgePlugin 必须在 QFrameworkPlugin 之后添加`**
 
-调用顺序反了。把 `.add_qframework::<A>()` 放在 `.bridge_q_messages::<M>()` 前面。
+调用顺序反了。把 `.install_architecture::<A>()` 放在 `.bridge_messages::<M>()` 前面。
 
 **`只能安装一个 QFrameworkPlugin`**
 
 同一个 App 里添加了两次 `QFrameworkPlugin`（即使架构类型不同）。Bevy 不会帮你拦——不同泛型参数是不同类型。
 
-**`未找到 QArchitecture 资源：请先调用 App::add_qframework::<A>()`**
+**`未找到 QArchitecture 资源：请先调用 App::install_architecture::<A>()`**
 
-在装插件之前就用了 `Res<QArchitecture>` 或 `add_q_controller`。
+在装插件之前就用了 `Res<QArchitecture>` 或 `app.architecture()`。
 
 **消息读不到**
 
@@ -380,7 +335,7 @@ fn controllers_run_every_frame() {
 
 **`Res<QArchitecture>` 和别的系统冲突**
 
-`Res<T>` 是共享只读借用，本身不会冲突。真正冲突的话，通常是同时借了 `ResMut<QControllers>` 或某个宽泛查询（Bevy 0.19 里 `Query<Entity>` 之类的宽泛查询会和资源访问冲突，需要加 `Without<IsResource>`）。
+`Res<T>` 是共享只读借用，本身不会冲突。真正冲突的话，通常是同时借了 `ResMut<QArchitecture>` 或某个宽泛查询（Bevy 0.19 里 `Query<Entity>` 之类的宽泛查询会和资源访问冲突，需要加 `Without<IsResource>`）。
 
 ---
 

@@ -1,6 +1,6 @@
 //! # QFramework 迷你地牢
 //!
-//! 一个「从零开始、六种角色全部参与」的完整示例：
+//! 一个「从零开始、业务架构与 Bevy 表现层配合」的完整示例：
 //!
 //! | 角色 | 位置 | 代表 |
 //! |---|---|---|
@@ -9,7 +9,7 @@
 //! | 命令 `ICommand` | [`command`] | `BuyItemCommand`、`PlayerAttackCommand` |
 //! | 查询 `IQuery` | [`query`] | `GetPlayerSnapshotQuery`、`GetInventoryQuery` |
 //! | 业务逻辑层 `ISystem` | [`system`] | `AchievementSystem`、`AutoSaveSystem` |
-//! | 表现层 `IController` | [`controller`] | `HudController`、`ScriptController` |
+//! | Bevy 表现层 | [`controller`] | `render_hud`、`run_script` |
 //!
 //! 运行：`cargo run -p mini-game`
 //!
@@ -28,7 +28,7 @@ use bevy::prelude::*;
 use qframework_bevy::prelude::*;
 
 use crate::app::MiniGame;
-use crate::controller::{HudController, ScriptController};
+use crate::controller::{HudState, render_hud, run_script, setup_hud};
 use crate::event::EnemyDefeatedEvent;
 use crate::model::AchievementModel;
 use crate::query::{GetInventoryQuery, GetPlayerSnapshotQuery, PlayerSnapshot};
@@ -39,7 +39,7 @@ const SCRIPT_FRAMES: i32 = 48;
 
 /// 一个普通的 Bevy 系统：读取被桥接过来的 QFramework 事件。
 ///
-/// 事件由 `BattleModel` 在战斗结算时触发，`bridge_q_messages` 把它转成 Bevy 消息，
+/// 事件由 `BattleModel` 在战斗结算时触发，`bridge_messages` 把它转成 Bevy 消息，
 /// 这里用 `MessageReader` 消费——QFramework 的业务逻辑完全不需要知道 Bevy 的存在。
 fn battle_report(mut reader: MessageReader<EnemyDefeatedEvent>) {
     for event in reader.read() {
@@ -59,7 +59,10 @@ fn print_summary(app: &mut App) {
 
     let player: PlayerSnapshot = architecture.send_query(GetPlayerSnapshotQuery);
     let inventory = architecture.send_query(GetInventoryQuery);
-    let achievements = architecture.get_model::<AchievementModel>().unlocked.snapshot();
+    let achievements = architecture
+        .get_model::<AchievementModel>()
+        .unlocked
+        .snapshot();
 
     let backpack = if inventory.is_empty() {
         "空".to_owned()
@@ -110,18 +113,17 @@ fn main() {
 
     app.add_plugins(MinimalPlugins)
         // 1. 安装架构：注册所有 Model / System / Utility
-        .add_qframework::<MiniGame>()
+        .install_architecture::<MiniGame>()
         // 2. 把 QFramework 事件桥接成 Bevy 消息
-        .bridge_q_messages::<EnemyDefeatedEvent>()
-        // 3. 注册表现层控制器（每帧在 QFrameworkSet::Controllers 里驱动）
-        .add_q_controller(HudController::default())
-        .add_q_controller(ScriptController::default())
-        // 4. Bevy 侧系统，排在控制器之后
-        .add_systems(Update, battle_report.after(QFrameworkSet::Controllers));
+        .bridge_messages::<EnemyDefeatedEvent>()
+        // 3. 表现层使用 Bevy 系统，先执行输入，再刷新 HUD
+        .init_resource::<HudState>()
+        .add_systems(Startup, setup_hud)
+        .add_systems(Update, (run_script, render_hud, battle_report).chain());
 
     println!("════════════════ QFramework 迷你地牢 ════════════════");
-    println!("  六种角色全部参与：Utility / Model / Command / Query / System / Controller");
-    println!("  无窗口运行，剧本由 ScriptController 驱动");
+    println!("  业务架构：Utility / Model / Command / Query / System，表现层使用 Bevy 系统");
+    println!("  无窗口运行，剧本由 run_script 驱动");
 
     // 无窗口环境下手动推进帧循环
     for _ in 0..SCRIPT_FRAMES {
@@ -129,4 +131,5 @@ fn main() {
     }
 
     print_summary(&mut app);
+    app.cleanup();
 }

@@ -577,11 +577,11 @@ subscriptions.lock().unwrap().unregister_all();
 
 | 阶段 | Model | System | Utility | Controller |
 |---|---|---|---|---|
-| 注册 | `ArchitectureBuilder::model` | `.system` | `.utility` | `App::add_q_controller` / `attach_controller` |
+| 注册 | `ArchitectureBuilder::model` | `.system` | `.utility` | `attach_controller`（仅绑定引用） |
 | 注入架构引用 | ✓（Construction） | ✓ | ✗（不需要） | ✓ |
-| `init(&self)` | 第 1 批 | 第 2 批 | 第 2 批 | 注册时立即调用 |
-| `deinit(&self)` | 最后 | 最先（与 Utility 一起） | 最先（与 System 一起） | `QControllers::deinit_all()` |
-| 析构 | 架构 `deinit()` 或整体 drop | 同左 | 同左 | `QControllers` drop |
+| `init(&self)` | 第 1 批 | 第 2 批 | 第 2 批 | 调用方显式调用 |
+| `deinit(&self)` | 最后 | 最先（与 Utility 一起） | 最先（与 System 一起） | 调用方显式调用 |
+| 析构 | 架构 `deinit()` 或整体 drop | 同左 | 同左 | 最后一个 `Arc<C>` 释放 |
 
 **注册顺序 = `init` 顺序**（同一批次内）。所以 `.model(A).model(B)` 保证 A 先于 B 初始化。
 

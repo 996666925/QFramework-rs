@@ -357,12 +357,12 @@ println!("有人订阅吗: {}", architecture.events().has_listener::<HpChangedEv
 
 ```rust
 // ❌
-app.bridge_q_messages::<HpChangedMessage>()
-   .add_qframework::<MyGame>();
+app.bridge_messages::<HpChangedMessage>()
+   .install_architecture::<MyGame>();
 
 // ✓
-app.add_qframework::<MyGame>()
-   .bridge_q_messages::<HpChangedMessage>();
+app.install_architecture::<MyGame>()
+   .bridge_messages::<HpChangedMessage>();
 ```
 
 ### `只能安装一个 QFrameworkPlugin`
@@ -371,30 +371,26 @@ app.add_qframework::<MyGame>()
 
 ```rust
 // ❌
-app.add_qframework::<GameA>()
-   .add_qframework::<GameB>();
+app.install_architecture::<GameA>()
+   .install_architecture::<GameB>();
 ```
 
 把两个架构合并成一个，或者把其中一个作为子 App。
 
-### `未找到 QArchitecture 资源：请先调用 App::add_qframework::<A>()`
+### `未找到 QArchitecture 资源：请先调用 App::install_architecture::<A>()`
 
-在装插件之前用了 `Res<QArchitecture>`、`q_architecture()` 或 `add_q_controller()`。
-
-### `QFrameworkSet` 相关的排序报错
-
-`QFrameworkSet::Controllers` 是由 `QFrameworkPlugin` 注册的。如果排序用到了它但插件还没装，Bevy 会报找不到集合。确保 `.add_qframework::<A>()` 在 `.add_systems(..)` 之前。
+在装插件之前用了 `Res<QArchitecture>` 或 `architecture()`。
 
 ### 消息读不到 / 慢一帧
 
 这是设计如此——事件在 `Update` 发出，下一帧 `PreUpdate` 才进入 Bevy 消息队列。如果必须在同帧响应，就不要走桥接，直接在 QFramework 侧注册 handler。
 
-### 控制器不更新
+### 表现层系统不更新
 
-1. 是不是用 `add_q_controller` 注册的？（手动 `attach_controller` 不会进 `QControllers`，也就不会被驱动）
-2. 实现了 `QControllerUpdate` 吗？
-3. 集合被 `run_if` 条件拦了吗？
-4. 用 `app.world().resource::<QControllers>().len()` 确认注册成功。
+1. 是否通过 `add_systems(Update, ...)` 注册了系统？
+2. 是否运行了帧循环（无窗口测试需调用 `app.update()`）？
+3. 是否被 `run_if` 条件拦截？
+4. 是否需要用 `.chain()` 或 `.before(...)` / `.after(...)` 明确执行顺序？
 
 ### `Res<QArchitecture>` 报访问冲突
 
@@ -453,8 +449,8 @@ println!("{:?}", architecture.try_get_model::<PlayerModel>().is_some());
 // 3. 确认事件有订阅者
 println!("{}", architecture.events().has_listener::<HpChangedEvent>());
 
-// 4. 确认控制器注册了（Bevy）
-println!("{}", app.world().resource::<QControllers>().len());
+// 4. 确认架构资源已安装（Bevy）
+println!("{}", app.world().contains_resource::<QArchitecture>());
 ```
 
 按「数据从哪来 → 谁改了它 → 谁该收到通知」这条链**从后往前**排查，通常比从前往后快。

@@ -57,7 +57,7 @@ pub struct BattleStartedEvent {
 
 /// 敌人被击败。
 ///
-/// 它既是 QFramework 事件，也是 Bevy 消息——通过 `bridge_q_messages` 转发给
+/// 它既是 QFramework 事件，也是 Bevy 消息——通过 `bridge_messages` 转发给
 /// Bevy 系统处理（见 `main.rs` 的 `battle_report`）。
 #[derive(Message, Debug, Clone, Copy)]
 pub struct EnemyDefeatedEvent {

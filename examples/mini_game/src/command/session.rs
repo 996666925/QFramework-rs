@@ -6,8 +6,7 @@ use crate::event::GameStartedEvent;
 
 /// 开始游戏：广播开始事件。
 ///
-/// 为什么不是 Controller 直接发事件？因为 `IController` **没有**发送事件的能力
-/// （它只能注册事件）。表现层负责表达意图，广播由命令完成——这正是分层规则想要的。
+/// 表现层负责表达意图，事件广播由命令完成，业务流程不依赖 Bevy。
 pub struct StartGameCommand;
 
 impl ICommand for StartGameCommand {

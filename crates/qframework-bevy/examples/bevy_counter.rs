@@ -1,9 +1,6 @@
-//! Bevy 集成示例：QFramework 四层架构 + 消息桥接 + 控制器调度。
+//! Bevy 集成示例：QFramework 业务架构 + 消息桥接 + Bevy 表现层系统。
 //!
 //! 运行：`cargo run -p qframework-bevy --example bevy_counter`
-
-use std::sync::atomic::{AtomicI32, Ordering};
-use std::time::Duration;
 
 use bevy::prelude::*;
 use qframework_bevy::prelude::*;
@@ -78,23 +75,14 @@ impl QApplication for CounterApp {
 }
 
 // ---------------------------------------------------------------------------
-// 表现层（Controller）：每帧被 Bevy 驱动
+// 表现层：Bevy 系统通过命令改变业务状态
 // ---------------------------------------------------------------------------
 
-#[derive(Default, IController)]
-struct CounterController {
-    arch: ArchRef,
-    frames: AtomicI32,
-}
-
-impl QControllerUpdate for CounterController {
-    fn update(&self, _delta: Duration) {
-        let frame = self.frames.fetch_add(1, Ordering::SeqCst);
-        if frame < 3 {
-            // 控制器只能通过 Command 改变状态
-            self.send_command(IncreaseCountCommand);
-        }
+fn increase_count(architecture: Res<QArchitecture>, mut frames: Local<u32>) {
+    if *frames < 3 {
+        architecture.send_command(IncreaseCountCommand);
     }
+    *frames += 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,10 +99,9 @@ fn main() {
     let mut app = App::new();
 
     app.add_plugins(MinimalPlugins)
-        .add_qframework::<CounterApp>()
-        .bridge_q_messages::<CountChangedMessage>()
-        .add_q_controller(CounterController::default())
-        .add_systems(Update, on_count_changed.after(QFrameworkSet::Controllers));
+        .install_architecture::<CounterApp>()
+        .bridge_messages::<CountChangedMessage>()
+        .add_systems(Update, (increase_count, on_count_changed).chain());
 
     // 无窗口环境下手动推进若干帧
     for _ in 0..5 {

@@ -1,6 +1,6 @@
 [package]
 name = "mini-game"
-description = "QFramework for Rust 的完整示例：Model / Command / Query / System / Utility / Controller 六种角色全部参与"
+description = "QFramework for Rust 的完整示例：业务架构、消息桥接与 Bevy 表现层系统"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

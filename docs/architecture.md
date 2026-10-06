@@ -188,9 +188,7 @@ error[E0599]: no method named `get_system` found for reference `&CounterModel` i
 三层的数据流：
 
 ```
-Bevy 输入系统 ──┐
-                ├─→ Res<QArchitecture> ─→ send_command ─→ Command ─→ Model
-QFramework 控制器┘                                                  │
+Bevy 输入系统 ──→ Res<QArchitecture> ─→ send_command ─→ Command ─→ Model
                                                                     │ send_event
                                                                     ▼
 Bevy 表现层 ←── MessageReader<M> ←── MessageWriter ←── QEventBridge ←┘
@@ -241,8 +239,7 @@ qframework-macros/        过程宏（唯一引入外部依赖的 crate）
 
 qframework-bevy/          Bevy 0.19 集成
 ├── app.rs                QApplication / QFrameworkPlugin / QArchitecture
-├── bridge.rs             QFramework 事件 -> Bevy Message
-└── controller.rs         QControllerUpdate / QControllers / QFrameworkSet
+└── bridge.rs             QFramework 事件 -> Bevy Message
 ```
 
 依赖方向是单向的：`qframework-bevy` → `qframework-core` → `qframework-macros`。
