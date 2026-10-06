@@ -1,7 +1,7 @@
 //! HUD 表现层系统：订阅状态变化，每帧最多刷新一次。
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::cell::Cell;
+use std::rc::Rc;
 
 use bevy::prelude::*;
 use qframework_bevy::prelude::*;
@@ -10,32 +10,32 @@ use crate::event::{BattleStartedEvent, GoldChangedEvent, HpChangedEvent};
 use crate::model::PlayerModel;
 use crate::query::{GetInventoryQuery, GetPlayerSnapshotQuery};
 
-#[derive(Resource, Default)]
+#[derive(Default)]
 pub struct HudState {
     subscriptions: IUnRegisterList,
-    dirty: Arc<AtomicBool>,
+    dirty: Rc<Cell<bool>>,
     last_rendered: String,
 }
 
-pub fn setup_hud(architecture: Res<QArchitecture>, mut hud: ResMut<HudState>) {
+pub fn setup_hud(architecture: NonSend<QArchitecture>, mut hud: NonSendMut<HudState>) {
     let player = architecture.get_model::<PlayerModel>();
 
-    let dirty = Arc::clone(&hud.dirty);
+    let dirty = Rc::clone(&hud.dirty);
     hud.subscriptions
         .add(player.hp.register_with_init_value(move |_| {
-            dirty.store(true, Ordering::SeqCst);
+            dirty.set(true);
         }));
 
-    let dirty = Arc::clone(&hud.dirty);
+    let dirty = Rc::clone(&hud.dirty);
     hud.subscriptions
         .add(player.gold.register_with_init_value(move |_| {
-            dirty.store(true, Ordering::SeqCst);
+            dirty.set(true);
         }));
 
-    let dirty = Arc::clone(&hud.dirty);
+    let dirty = Rc::clone(&hud.dirty);
     hud.subscriptions
         .add(player.level.register_with_init_value(move |_| {
-            dirty.store(true, Ordering::SeqCst);
+            dirty.set(true);
         }));
 
     hud.subscriptions
@@ -54,8 +54,8 @@ pub fn setup_hud(architecture: Res<QArchitecture>, mut hud: ResMut<HudState>) {
     );
 }
 
-pub fn render_hud(architecture: Res<QArchitecture>, mut hud: ResMut<HudState>) {
-    if !hud.dirty.swap(false, Ordering::SeqCst) {
+pub fn render_hud(architecture: NonSend<QArchitecture>, mut hud: NonSendMut<HudState>) {
+    if !hud.dirty.replace(false) {
         return;
     }
 
@@ -83,20 +83,20 @@ mod tests {
             .build();
         let player = architecture.get_model::<PlayerModel>();
         let mut app = App::new();
-        app.insert_resource(QArchitecture::from(Arc::clone(&architecture)))
-            .init_resource::<HudState>()
+        app.insert_non_send(QArchitecture::from(Rc::clone(&architecture)))
+            .init_non_send::<HudState>()
             .add_systems(Startup, setup_hud);
         app.update();
 
-        let dirty = Arc::clone(&app.world().resource::<HudState>().dirty);
-        assert!(dirty.swap(false, Ordering::SeqCst));
+        let dirty = Rc::clone(&app.world().non_send::<HudState>().dirty);
+        assert!(dirty.replace(false));
         player.hp.set(90);
-        assert!(dirty.swap(false, Ordering::SeqCst));
+        assert!(dirty.replace(false));
         assert!(architecture.events().has_listener::<HpChangedEvent>());
 
-        drop(app.world_mut().remove_resource::<HudState>());
+        drop(app.world_mut().remove_non_send::<HudState>());
         player.hp.set(80);
-        assert!(!dirty.load(Ordering::SeqCst));
+        assert!(!dirty.get());
         assert!(!architecture.events().has_listener::<HpChangedEvent>());
         assert!(!architecture.events().has_listener::<GoldChangedEvent>());
         assert!(!architecture.events().has_listener::<BattleStartedEvent>());

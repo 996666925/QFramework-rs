@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::rc::Rc;
 
 use qframework_core::prelude::*;
+use std::cell::Cell;
 
 #[derive(Default, IModel)]
 struct CounterModel {
@@ -59,21 +59,21 @@ fn events_reach_subscribers() {
         .model(CounterModel::default())
         .build();
 
-    let received = Arc::new(AtomicI32::new(0));
-    let sink = Arc::clone(&received);
+    let received = Rc::new(Cell::new(0));
+    let sink = Rc::clone(&received);
     let unregister = architecture.register_event::<CountChangedEvent, _>(move |event| {
-        sink.store(event.count, Ordering::SeqCst);
+        sink.set(event.count);
     });
 
     architecture.send_command(IncreaseCommand);
-    assert_eq!(received.load(Ordering::SeqCst), 1);
+    assert_eq!(received.get(), 1);
 
     architecture.send_command(IncreaseCommand);
-    assert_eq!(received.load(Ordering::SeqCst), 2);
+    assert_eq!(received.get(), 2);
 
     unregister.unregister();
     architecture.send_command(IncreaseCommand);
-    assert_eq!(received.load(Ordering::SeqCst), 2);
+    assert_eq!(received.get(), 2);
 }
 
 #[test]
@@ -92,24 +92,24 @@ fn models_initialize_before_systems() {
 #[test]
 fn bindable_property_notifies_and_can_be_silent() {
     let property = BindableProperty::new(0);
-    let observed = Arc::new(AtomicI32::new(-1));
+    let observed = Rc::new(Cell::new(-1));
 
-    let sink = Arc::clone(&observed);
+    let sink = Rc::clone(&observed);
     let unregister = property.register(move |value| {
-        sink.store(*value, Ordering::SeqCst);
+        sink.set(*value);
     });
 
     property.set(7);
-    assert_eq!(observed.load(Ordering::SeqCst), 7);
+    assert_eq!(observed.get(), 7);
     assert_eq!(property.get(), 7);
 
     property.set_value_without_event(42);
     assert_eq!(property.get(), 42);
-    assert_eq!(observed.load(Ordering::SeqCst), 7);
+    assert_eq!(observed.get(), 7);
 
     unregister.unregister();
     property.set(9);
-    assert_eq!(observed.load(Ordering::SeqCst), 7);
+    assert_eq!(observed.get(), 7);
 }
 
 #[test]
@@ -132,17 +132,17 @@ fn deinit_clears_container_and_events() {
 #[model(init = Self::on_init, deinit = Self::on_deinit)]
 struct HookedModel {
     arch: ArchRef,
-    inits: AtomicI32,
-    deinits: AtomicI32,
+    inits: Cell<i32>,
+    deinits: Cell<i32>,
 }
 
 impl HookedModel {
     fn on_init(&self) {
-        self.inits.fetch_add(1, Ordering::SeqCst);
+        self.inits.set(self.inits.get() + 1);
     }
 
     fn on_deinit(&self) {
-        self.deinits.fetch_add(1, Ordering::SeqCst);
+        self.deinits.set(self.deinits.get() + 1);
     }
 }
 
@@ -153,16 +153,16 @@ fn derive_supports_lifecycle_hooks() {
         .build();
 
     let model = architecture.get_model::<HookedModel>();
-    assert_eq!(model.inits.load(Ordering::SeqCst), 1);
-    assert_eq!(model.deinits.load(Ordering::SeqCst), 0);
+    assert_eq!(model.inits.get(), 1);
+    assert_eq!(model.deinits.get(), 0);
 
     architecture.deinit();
-    assert_eq!(model.deinits.load(Ordering::SeqCst), 1);
+    assert_eq!(model.deinits.get(), 1);
 }
 
 #[derive(Default, IUtility)]
 struct HookedUtility {
-    ready: AtomicI32,
+    ready: Cell<i32>,
 }
 
 #[test]
@@ -173,13 +173,7 @@ fn utility_derive_does_not_require_arch_field() {
 
     assert!(architecture.try_get_utility::<HookedUtility>().is_some());
     // 未设置任何字段的默认值就是 0
-    assert_eq!(
-        architecture
-            .get_utility::<HookedUtility>()
-            .ready
-            .load(Ordering::SeqCst),
-        0
-    );
+    assert_eq!(architecture.get_utility::<HookedUtility>().ready.get(), 0);
 }
 
 #[derive(Default, ISystem)]
@@ -219,10 +213,28 @@ fn controller_derive_generates_capability_impls() {
     unregister.unregister();
 }
 
+#[derive(Default, IController)]
+struct MainThreadController<T: 'static> {
+    arch: ArchRef,
+    state: std::rc::Rc<std::cell::RefCell<T>>,
+}
+
+#[test]
+fn controller_supports_main_thread_state_and_generic_derive() {
+    let architecture = ArchitectureBuilder::new("MainThread")
+        .model(CounterModel::default())
+        .build();
+    let controller = architecture.attach_controller(MainThreadController::<u32>::default());
+    *controller.state.borrow_mut() = 7;
+    controller.send_command(IncreaseCommand);
+    assert_eq!(*controller.state.borrow(), 7);
+    assert_eq!(controller.send_query(GetCountQuery), 1);
+}
+
 #[derive(Default, IModel)]
 struct GenericModel<T>
 where
-    T: Send + Sync + 'static,
+    T: 'static,
 {
     arch: ArchRef,
     payload: std::marker::PhantomData<T>,
@@ -284,14 +296,14 @@ fn get_model_panics_with_readable_message() {
 fn send_event_default_uses_default_value() {
     let architecture = ArchitectureBuilder::new("Test").build();
 
-    let received = Arc::new(AtomicI32::new(-1));
-    let sink = Arc::clone(&received);
+    let received = Rc::new(Cell::new(-1));
+    let sink = Rc::clone(&received);
     let _unregister = architecture.register_event::<DefaultEvent, _>(move |event| {
-        sink.store(event.0, Ordering::SeqCst);
+        sink.set(event.0);
     });
 
     architecture.send_event_default::<DefaultEvent>();
-    assert_eq!(received.load(Ordering::SeqCst), 0);
+    assert_eq!(received.get(), 0);
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -320,17 +332,17 @@ fn global_event_system_is_shared_across_architectures() {
     struct GlobalEvent(i32);
 
     let bus = TypeEventSystem::global();
-    let received = Arc::new(AtomicI32::new(0));
-    let sink = Arc::clone(&received);
+    let received = Rc::new(Cell::new(0));
+    let sink = Rc::clone(&received);
 
     let unregister = bus.register::<GlobalEvent>(move |event| {
-        sink.store(event.0, Ordering::SeqCst);
+        sink.set(event.0);
     });
 
     bus.send(GlobalEvent(42));
-    assert_eq!(received.load(Ordering::SeqCst), 42);
+    assert_eq!(received.get(), 42);
 
     unregister.unregister();
     bus.send(GlobalEvent(7));
-    assert_eq!(received.load(Ordering::SeqCst), 42);
+    assert_eq!(received.get(), 42);
 }

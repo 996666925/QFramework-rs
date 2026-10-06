@@ -2,12 +2,14 @@
 
 **仓库地址**：<https://github.com/996666925/QFramework-rs>
 
-[QFramework](https://github.com/liangxiegame/QFramework) 的 Rust 实现，专为 [Bevy](https://bevy.org) 打造。
+[QFramework](https://github.com/liangxiegame/QFramework) 的 Rust 实现，支持 [Bevy](https://bevy.org) 与 [Godot](https://godotengine.org)。
 
 保留了 QFramework 最核心的设计——**四层架构 + 编译期依赖约束 + CQRS + 事件驱动 + 可绑定属性**，
 并用 Rust 的 trait 系统把「谁能访问谁」变成**编译错误**，而不是靠开发者自觉。
 
 - **兼容 Bevy 最新版（0.19.x）**
+- **Godot Node Controller**：基于 gdext 0.5.5，节点直接派生 `IController`
+- **应用共享入口**：`MyApp::interface()` 懒加载，Controller 声明所属应用即可自动获取架构
 - **Cargo workspace 结构**：架构核心与引擎解耦
 - **运行时零外部依赖**：`qframework-core` 只用标准库；派生宏放在独立的 `qframework-macros`，即使用户不想要过程宏也可以只依赖核心
 - 全部测试与示例均可在无窗口环境下运行
@@ -23,6 +25,7 @@ qframework/
 ├── crates/
 │   ├── qframework-core/           # 核心架构（不依赖任何引擎）
 │   │   ├── src/
+│   │   │   ├── application.rs     # QApplication / 按类型共享的架构入口
 │   │   │   ├── architecture.rs    # Architecture / ArchitectureBuilder
 │   │   │   ├── layers.rs          # 四层接口 + 能力接口
 │   │   │   ├── command.rs         # ICommand（CQRS 写侧）
@@ -39,16 +42,13 @@ qframework/
 │   ├── qframework-macros/         # 过程宏 crate
 │   │   ├── src/lib.rs             # #[derive(IModel / ISystem / IController / IUtility)]
 │   │   └── src/layer.rs           # 四个派生宏的公共展开逻辑
-│   └── qframework-bevy/           # Bevy 集成层
-│       ├── src/
-│       │   ├── app.rs             # QFrameworkPlugin / QArchitecture / QApplication
-│       │   └── bridge.rs          # QFramework 事件 -> Bevy Message 桥接
-│       ├── examples/bevy_counter.rs
-│       └── tests/
-│           ├── integration.rs     # Bevy 集成测试
-│           └── docs_examples.rs   # 文档代码片段校验
+│   ├── qframework-bevy/           # Bevy 架构插件、资源与消息桥接
+│   │   ├── examples/bevy_counter.rs
+│   │   └── tests/                # Bevy 集成与文档示例校验
+│   └── qframework-godot/          # Node Controller 绑定与事件接收队列
 └── examples/
-    └── mini_game/                 # 完整示例工程（业务架构 + Bevy 表现层）
+    ├── mini_game/                 # 完整示例工程（业务架构 + Bevy 表现层）
+    └── godot_counter/             # Godot Node / Node2D 示例与 headless 检查
 ```
 
 ---
@@ -63,8 +63,9 @@ qframework/
 | [核心概念](docs/core-concepts.md) | `Architecture`、IOC、事件系统、Command/Query、可观察容器、生命周期总表 |
 | [派生宏](docs/derive-macros.md) | 四个派生宏的完整规则、`arch` 字段、生命周期钩子、展开后的代码、常见错误 |
 | [Bevy 集成](docs/bevy.md) | 插件安装、资源访问、表现层系统、消息桥接、系统排序、无窗口测试 |
-| [最佳实践](docs/best-practices.md) | 推荐写法、并发注意事项、性能、测试策略、命名与目录约定、反模式清单 |
-| [排错手册](docs/troubleshooting.md) | 编译错误、运行时 panic、死锁、事件收不到、Bevy 相关问题 |
+| [Godot 集成](docs/godot.md) | Node Controller、架构绑定、场景访问、事件接收、节点生命周期 |
+| [最佳实践](docs/best-practices.md) | 推荐写法、单线程借用、性能、测试策略、命名与目录约定、反模式清单 |
+| [排错手册](docs/troubleshooting.md) | 编译错误、运行时 panic、借用冲突、事件收不到、Bevy 相关问题 |
 
 **第一次上手**：本页的[快速开始](#快速开始纯-rust) → [架构总览](docs/architecture.md) → [最佳实践](docs/best-practices.md)。
 
@@ -83,7 +84,7 @@ qframework/
 | `IUtility` | `IUtility` + `#[derive(IUtility)]` | 工具层 |
 | `ICommand` / `ICommand<TResult>` | `ICommand`（关联类型 `Output`） | 命令 |
 | `IQuery<TResult>` | `IQuery`（关联类型 `Result`） | 查询 |
-| `IArchitecture` / `Architecture<T>` | `Architecture` / `ArchitectureBuilder` | 中心枢纽 |
+| `IArchitecture` / `Architecture<T>` | `Architecture` / `ArchitectureBuilder` / `QApplication` | 中心枢纽；`MyApp::interface()` 对应原版共享入口 |
 | `IOCContainer` | `IOCContainer` | 类型化依赖容器 |
 | `TypeEventSystem` / `EasyEvent` | `TypeEventSystem` / `EasyEvent` | 类型事件总线 |
 | `BindableProperty<T>` | `BindableProperty<T>` | 可观察属性 |
@@ -177,7 +178,7 @@ impl ICommand for IncreaseCountCommand {
     type Output = ();
     fn execute(&self, ctx: &CommandContext) {
         let model = ctx.get_model::<CounterModel>();
-        model.count.modify(|count| *count += 1);   // 原子的「读-改-写」
+        model.count.modify(|count| *count += 1);   // 一次修改后通知
         ctx.send_event(CountChangedEvent { count: model.count.get() });
     }
 }
@@ -223,7 +224,7 @@ impl ICommand for IncreaseCountCommand {
     type Output = ();
     fn execute(&self, ctx: &CommandContext) {
         let model = ctx.get_model::<CounterModel>();
-        model.count.modify(|count| *count += 1);   // 原子的「读-改-写」
+        model.count.modify(|count| *count += 1);   // 一次修改后通知
         ctx.send_event(CountChangedMessage { count: model.count.get() });
     }
 }
@@ -256,7 +257,7 @@ fn read_messages(mut reader: MessageReader<CountChangedMessage>) {
 在任意 Bevy 系统里都可以直接拿到架构：
 
 ```rust
-fn my_system(architecture: Res<QArchitecture>) {
+fn my_system(architecture: NonSend<QArchitecture>) {
     architecture.send_command(IncreaseCountCommand);            // 发命令
     let count = architecture.get_model::<CounterModel>();        // 取 Model
     println!("{}", count.count.get());
@@ -274,7 +275,7 @@ cargo run -p qframework-bevy --example bevy_counter
 ## 表现层：直接使用 Bevy 系统
 
 ```rust
-fn increase_count(architecture: Res<QArchitecture>, mut frames: Local<u32>) {
+fn increase_count(architecture: NonSend<QArchitecture>, mut frames: Local<u32>) {
     if *frames < 3 {
         architecture.send_command(IncreaseCountCommand);
     }
@@ -295,7 +296,7 @@ Bevy 系统可以直接使用 `Query`、`Commands` 和 Resource 操作场景、�
 Bevy 的缓冲事件（`Message`）只能在系统中写入，而 QFramework 的事件可能由
 Model / Command / System 在任意位置触发。桥接插件的工作方式是：
 
-1. `PreUpdate` 之前，监听 QFramework 事件并推入一个跨线程队列；
+1. `PreUpdate` 之前，监听 QFramework 事件并推入一个单线程队列；
 2. `PreUpdate` 阶段把队列内容写入 Bevy 的 `Messages<M>`；
 3. 其他系统照常使用 `MessageReader<M>`。
 
@@ -303,21 +304,14 @@ Model / Command / System 在任意位置触发。桥接插件的工作方式是�
 
 ---
 
-## 并发与性能
-
-QFramework 原本面向 Unity 主线程，而这里的代码很可能跑在 Bevy 的并行系统里，因此有几点需要注意：
-
-- **复合修改用 `modify`，不要 `get()` + `set()`。**
-  `modify` 在一次写锁内完成「读-改-写」，是原子的；`get()` 后再 `set()` 在并发下会丢更新。
-- **`send_command` 是同步执行的，架构不做排队或串行化。**
-  命令里的「读-改-写」同样要保证原子性（即用 `modify`）。
-- **只读时用 `with_value` / `with_items` / `with_entries`**，避免 `get()` / `snapshot()` 的整块拷贝。
-- **不要在 `modify` / `with_value` 的闭包里再操作同一个属性。**
-  `std::sync::RwLock` 不可重入，会死锁。
-- **集合事件在写入之后发出。** 并发写入时，`BindableList` / `BindableDictionary` 的事件
-  到达顺序不保证与写入顺序一致，但每个事件携带的值一定是当时真实写入的值。
-- **每个事件订阅者持强引用。** 忘记注销会导致订阅者无法释放——用返回的 `IUnRegister`，
-  或把句柄放进 `IUnRegisterList`（它在 `Drop` 时会自动注销）。
+## 单线程与性能
+框架面向引擎主线程。架构、层对象、回调和绑定容器使用 `Rc` / `RefCell`，没有线程安全约束：
+- 属性和事件支持 `FnMut`，可直接捕获 Godot `Gd`、`Rc` 等对象。
+- Bevy 架构通过 `NonSend<QArchitecture>` 使用，相关系统在主线程运行。
+- Command 和事件同步执行；`modify` 便于统一修改后通知，`get()` 后 `set()` 也可用。
+- 在 `modify` 中重新读写同一属性会造成借用冲突 panic；通知在释放数据借用后发出。
+- `with_value` / `with_items` / `with_entries` 可以避免整体克隆。
+- 用 `IUnRegisterList` 管理订阅，在节点退出或列表析构时注销。
 
 ---
 

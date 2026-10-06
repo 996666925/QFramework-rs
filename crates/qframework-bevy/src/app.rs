@@ -2,37 +2,31 @@
 
 use std::marker::PhantomData;
 use std::ops::Deref;
-use std::sync::Arc;
+use std::rc::Rc;
 
 use bevy::prelude::*;
-use qframework_core::{Architecture, ArchitectureBuilder};
-
-/// 用类型描述应用的 QFramework 架构。
-///
-/// 一个类型只需要描述「注册了哪些 Model / System / Utility」，
-/// 架构的创建、初始化时机由 [`QFrameworkPlugin`] 负责。
-pub trait QApplication: Send + Sync + 'static {
-    /// 构建架构（在这里注册 Model / System / Utility）。
-    fn build() -> ArchitectureBuilder;
-}
+use qframework_core::Architecture;
+pub use qframework_core::QApplication;
 
 /// Bevy 世界中的 QFramework 架构资源。
+///
+/// 作为 NonSend 数据安装；使用它的系统在主线程运行。
 ///
 /// 通过 [`Deref`] 可以像使用 [`Architecture`] 一样使用它：
 ///
 /// ```ignore
-/// fn my_system(architecture: Res<QArchitecture>) {
+/// fn my_system(architecture: NonSend<QArchitecture>) {
 ///     architecture.send_command(IncreaseCountCommand);
 ///     let count = architecture.get_model::<CounterModel>().count.get();
 /// }
 /// ```
-#[derive(Resource, Clone, Debug)]
-pub struct QArchitecture(pub Arc<Architecture>);
+#[derive(Clone, Debug)]
+pub struct QArchitecture(pub Rc<Architecture>);
 
 impl QArchitecture {
     /// 取得共享句柄，便于把架构传递到非系统的代码中。
-    pub fn arc(&self) -> Arc<Architecture> {
-        Arc::clone(&self.0)
+    pub fn rc(&self) -> Rc<Architecture> {
+        Rc::clone(&self.0)
     }
 }
 
@@ -44,8 +38,8 @@ impl Deref for QArchitecture {
     }
 }
 
-impl From<Arc<Architecture>> for QArchitecture {
-    fn from(architecture: Arc<Architecture>) -> Self {
+impl From<Rc<Architecture>> for QArchitecture {
+    fn from(architecture: Rc<Architecture>) -> Self {
         Self(architecture)
     }
 }
@@ -75,16 +69,16 @@ impl<A: QApplication> QFrameworkPlugin<A> {
 impl<A: QApplication> Plugin for QFrameworkPlugin<A> {
     fn build(&self, app: &mut App) {
         assert!(
-            !app.world().contains_resource::<QArchitecture>(),
+            !app.world().contains_non_send::<QArchitecture>(),
             "只能安装一个 QFrameworkPlugin：`QArchitecture` 资源已存在"
         );
 
         let architecture = A::build().build();
-        app.insert_resource(QArchitecture(architecture));
+        app.insert_non_send(QArchitecture(architecture));
     }
 
     fn cleanup(&self, app: &mut App) {
-        if let Some(architecture) = app.world().get_resource::<QArchitecture>() {
+        if let Some(architecture) = app.world().get_non_send::<QArchitecture>() {
             architecture.deinit();
         }
     }
@@ -107,7 +101,7 @@ pub trait AppQFrameworkExt {
         M: Message + Clone;
 
     /// 取得架构句柄（需要先 [`install_architecture`](AppQFrameworkExt::install_architecture)）。
-    fn architecture(&self) -> Arc<Architecture>;
+    fn architecture(&self) -> Rc<Architecture>;
 }
 
 impl AppQFrameworkExt for App {
@@ -122,10 +116,10 @@ impl AppQFrameworkExt for App {
         self.add_plugins(crate::bridge::QEventBridgePlugin::<M>::default())
     }
 
-    fn architecture(&self) -> Arc<Architecture> {
+    fn architecture(&self) -> Rc<Architecture> {
         self.world()
-            .get_resource::<QArchitecture>()
+            .get_non_send::<QArchitecture>()
             .expect("未找到 QArchitecture 资源：请先调用 App::install_architecture::<A>()")
-            .arc()
+            .rc()
     }
 }

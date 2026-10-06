@@ -8,8 +8,9 @@
 
 #![allow(dead_code)] // 示例里有大量只用于展示的类型与字段
 
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::rc::Rc;
 use std::time::Duration;
 
 use bevy::prelude::*;
@@ -77,13 +78,13 @@ impl MyService {
 fn check_ioc() {
     let mut container = qframework_core::IOCContainer::new();
     container.register(MyConfig { retries: 3 });
-    container.register_arc(Arc::new(MyService::new()));
+    container.register_rc(Rc::new(MyService::new()));
 
     assert!(container.contains::<MyConfig>());
-    let _config: Arc<MyConfig> = container.get::<MyConfig>().unwrap();
+    let _config: Rc<MyConfig> = container.get::<MyConfig>().unwrap();
     assert_eq!(container.len(), 2);
     assert!(!container.is_empty());
-    let _panic_free: Arc<MyService> = container.expect::<MyService>();
+    let _panic_free: Rc<MyService> = container.expect::<MyService>();
     container.clear();
 }
 
@@ -92,8 +93,8 @@ fn check_ioc() {
 fn check_easy_event() {
     use qframework_core::EasyEvent;
 
-    let on_refresh = Arc::new(EasyEvent::<()>::new());
-    let _unregister = Arc::clone(&on_refresh).register(|_| println!("refresh!"));
+    let on_refresh = Rc::new(EasyEvent::<()>::new());
+    let _unregister = Rc::clone(&on_refresh).register(|_| println!("refresh!"));
     on_refresh.send(&());
     assert_eq!(on_refresh.handler_count(), 1);
     on_refresh.clear();
@@ -160,7 +161,7 @@ impl SaveUtility {
 #[controller(init = Self::start)]
 struct HudController {
     arch: ArchRef,
-    subscriptions: Mutex<IUnRegisterList>,
+    subscriptions: RefCell<IUnRegisterList>,
 }
 
 impl HudController {
@@ -171,12 +172,12 @@ impl HudController {
             .register_with_init_value(|hp| {
                 println!("HP: {hp}");
             });
-        self.subscriptions.lock().unwrap().add(un);
+        self.subscriptions.borrow_mut().add(un);
 
         let un = self.register_event::<DamageTakenEvent, _>(|event| {
             println!("受到 {} 点伤害", event.amount);
         });
-        self.subscriptions.lock().unwrap().add(un);
+        self.subscriptions.borrow_mut().add(un);
     }
 }
 
@@ -186,7 +187,7 @@ impl HudController {
 #[system(init = |this: &AchievementSystem| { this.subscribe(); })]
 struct AchievementSystem {
     arch: ArchRef,
-    subscriptions: Mutex<IUnRegisterList>,
+    subscriptions: RefCell<IUnRegisterList>,
 }
 
 impl AchievementSystem {
@@ -194,7 +195,7 @@ impl AchievementSystem {
         let un = self.register_event::<DamageTakenEvent, _>(|event| {
             println!("检查成就 {}", event.amount);
         });
-        self.subscriptions.lock().unwrap().add(un);
+        self.subscriptions.borrow_mut().add(un);
     }
 }
 
@@ -396,11 +397,11 @@ fn check_architecture_api() {
         .build();
     assert_eq!(replaced.registered_count(), 1);
 
-    let _: Arc<Architecture> = architecture.arc();
+    let _: Rc<Architecture> = architecture.rc();
     let _: &qframework_core::TypeEventSystem = architecture.events();
-    let _: Option<Arc<PlayerModel>> = architecture.try_get_model::<PlayerModel>();
-    let _: Option<Arc<AchievementSystem>> = architecture.try_get_system::<AchievementSystem>();
-    let _: Option<Arc<SaveUtility>> = architecture.try_get_utility::<SaveUtility>();
+    let _: Option<Rc<PlayerModel>> = architecture.try_get_model::<PlayerModel>();
+    let _: Option<Rc<AchievementSystem>> = architecture.try_get_system::<AchievementSystem>();
+    let _: Option<Rc<SaveUtility>> = architecture.try_get_utility::<SaveUtility>();
 
     architecture.send_event(GameStartedEvent);
     architecture.send_event_default::<GameStartedEvent>();
@@ -412,7 +413,7 @@ fn check_architecture_api() {
     assert!(result.is_err());
 
     // attach_controller + 手动使用
-    let controller: Arc<HudController> = architecture.attach_controller(HudController::default());
+    let controller: Rc<HudController> = architecture.attach_controller(HudController::default());
     IController::init(controller.as_ref());
     controller.send_command(AddGoldCommand { amount: 5 });
     let _ = controller.send_query(GetInventoryQuery);
@@ -449,7 +450,7 @@ impl ICommand for IncreaseCountCommand {
     }
 }
 
-fn tick_counter(architecture: Res<QArchitecture>, mut frames: Local<u32>) {
+fn tick_counter(architecture: NonSend<QArchitecture>, mut frames: Local<u32>) {
     if (*frames).is_multiple_of(60) {
         architecture.send_command(IncreaseCountCommand);
     }
@@ -472,11 +473,11 @@ fn on_count_changed(mut reader: MessageReader<CountChangedMessage>) {
     }
 }
 
-fn refresh_ui(architecture: Res<QArchitecture>) {
+fn refresh_ui(architecture: NonSend<QArchitecture>) {
     let _ = architecture.get_model::<CounterModel>().count.get();
 }
 
-fn peek(bridge: Res<QEventBridge<CountChangedMessage>>) {
+fn peek(bridge: NonSend<QEventBridge<CountChangedMessage>>) {
     println!("积压 {}", bridge.len());
     let _queue = bridge.queue();
     bridge.push(CountChangedMessage { count: 1 });
@@ -498,7 +499,7 @@ fn check_bevy() {
         app.architecture().get_model::<CounterModel>().count.get(),
         1
     );
-    let _handle: Arc<Architecture> = app.world().resource::<QArchitecture>().arc();
+    let _handle: Rc<Architecture> = app.world().non_send::<QArchitecture>().rc();
 
     app.cleanup();
 }
@@ -526,7 +527,7 @@ impl qframework_core::HasArchRef for ManualModel {
 }
 
 impl qframework_core::ICanGetArchitecture for ManualModel {
-    fn architecture(&self) -> Arc<Architecture> {
+    fn architecture(&self) -> Rc<Architecture> {
         self.arch.get()
     }
 }

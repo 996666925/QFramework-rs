@@ -7,6 +7,7 @@
 3. 清理架构（由插件的 `cleanup` 钩子执行）。
 
 表现层直接使用 Bevy 系统，输入、场景节点和 UI 通过 `Query`、`Commands`、Resource 访问。
+核心在单线程运行，`QArchitecture` 和桥接队列作为 `NonSend` 数据安装，访问它们的系统在主线程执行。
 
 ---
 
@@ -75,7 +76,7 @@ fn main() {
 ```rust
 fn build(&self, app: &mut App) {
     let architecture = A::build().build();      // 注册 + 两阶段初始化
-    app.insert_resource(QArchitecture(architecture));
+    app.insert_non_send(QArchitecture(architecture));
 }
 
 fn cleanup(&self, app: &mut App) {
@@ -84,6 +85,11 @@ fn cleanup(&self, app: &mut App) {
 ```
 
 `cleanup` 是 Bevy 的插件生命周期钩子。手动推进帧的无窗口示例在使用完架构后显式调用 `app.cleanup()`；若架构需要贯穿运行循环，应由应用在结束时安排清理。
+
+`QApplication` 来自核心 crate，此处重导出以保持已有用法。插件通过 `A::build().build()`
+创建本世界的独立架构，多个 Bevy App 不共享状态。`A::interface()` 是另一份按应用类型
+共享的实例；Bevy 系统继续通过 `NonSend<QArchitecture>` 访问本世界的数据。
+需要让 Godot 节点访问同一 Bevy 世界时，显式注入 `app.architecture()`。
 
 ---
 
@@ -95,14 +101,14 @@ use qframework_bevy::prelude::*;
 
 fn send_damage(
     keyboard: Res<ButtonInput<KeyCode>>,
-    architecture: Res<QArchitecture>,
+    architecture: NonSend<QArchitecture>,
 ) {
     if keyboard.just_pressed(KeyCode::Space) {
         architecture.send_command(TakeDamageCommand { amount: 10 });
     }
 }
 
-fn read_state(architecture: Res<QArchitecture>) {
+fn read_state(architecture: NonSend<QArchitecture>) {
     let hp = architecture.get_model::<PlayerModel>().hp.get();
     println!("HP = {hp}");
 }
@@ -110,10 +116,10 @@ fn read_state(architecture: Res<QArchitecture>) {
 
 `QArchitecture` 实现了 `Deref<Target = Architecture>`，所以**在它上面可以直接调用 `Architecture` 的全部方法**——`send_command`、`send_query`、`get_model`、`register_event` 都能用。
 
-需要把架构带出系统（存到别处、发给另一个线程）时：
+需要在当前线程把架构句柄保存到其他位置时：
 
 ```rust
-let handle: Arc<Architecture> = architecture.arc();   // 或 QArchitecture::arc(&q_arch)
+let handle: Rc<Architecture> = architecture.rc();   // 或 QArchitecture::rc(&architecture)
 ```
 
 ---
@@ -127,7 +133,7 @@ let handle: Arc<Architecture> = architecture.arc();   // 或 QArchitecture::arc(
 #[derive(Component, Default)]
 struct DisplayedCount(i32);
 
-fn tick_counter(architecture: Res<QArchitecture>, mut frames: Local<u32>) {
+fn tick_counter(architecture: NonSend<QArchitecture>, mut frames: Local<u32>) {
     if (*frames).is_multiple_of(60) {
         architecture.send_command(IncreaseCountCommand);
     }
@@ -135,7 +141,7 @@ fn tick_counter(architecture: Res<QArchitecture>, mut frames: Local<u32>) {
 }
 
 fn refresh_scene(
-    architecture: Res<QArchitecture>,
+    architecture: NonSend<QArchitecture>,
     mut nodes: Query<&mut DisplayedCount>,
 ) {
     let count = architecture.get_model::<CounterModel>().count.get();
@@ -150,7 +156,7 @@ app.add_systems(Update, (tick_counter, refresh_scene).chain());
 
 `Local` 保存单个系统的跨帧状态；共享的表现状态使用 Resource。
 `.chain()` 保证输入逻辑先于展示刷新；也可以用 `.before(...)`、`.after(...)` 或自定义 `SystemSet` 排序。
-只有 `Res<QArchitecture>` 时，Bevy 不知道各系统通过内部锁访问了哪些 Model，需要业务顺序时应显式排序。
+`NonSend<QArchitecture>` 保证相关系统在主线程运行，但不保证业务顺序，需要先后顺序时仍应显式排序。
 
 ### 订阅生命周期
 
@@ -167,13 +173,13 @@ app.add_systems(Update, (tick_counter, refresh_scene).chain());
 
 ### 为什么需要它
 
-QFramework 的事件可能在 **Model / Command / System** 里被触发，而 Bevy 的消息（`Message`）只能在**系统**里写入。桥接插件在两者之间加了一个线程安全队列：
+QFramework 的事件可能在 **Model / Command / System** 里被触发，桥接插件在回调和 Bevy 消息写入系统之间加了一个单线程队列：
 
 ```
 QFramework 事件（任意位置触发）
         │  handler（注册在架构事件总线上）
         ▼
-   Arc<Mutex<Vec<M>>> 队列
+   Rc<RefCell<Vec<M>>> 队列
         │  forward_messages（PreUpdate）
         ▼
    Bevy Messages<M>
@@ -236,7 +242,7 @@ architecture.register_event::<HpChangedMessage, _>(|event| { /* ... */ });
 ### 手动访问队列
 
 ```rust
-fn peek(bridge: Res<QEventBridge<HpChangedMessage>>) {
+fn peek(bridge: NonSend<QEventBridge<HpChangedMessage>>) {
     println!("积压 {}", bridge.len());
     // bridge.push(msg) / bridge.drain() / bridge.queue() 也可用
 }
@@ -258,11 +264,11 @@ app.init_state::<GameState>()
    .add_systems(OnEnter(GameState::Playing), start_battle)
    .add_systems(OnExit(GameState::Playing), end_battle);
 
-fn start_battle(architecture: Res<QArchitecture>) {
+fn start_battle(architecture: NonSend<QArchitecture>) {
     architecture.send_command(StartBattleCommand);
 }
 
-fn end_battle(architecture: Res<QArchitecture>) {
+fn end_battle(architecture: NonSend<QArchitecture>) {
     architecture.send_command(EndBattleCommand);
 }
 ```
@@ -327,15 +333,17 @@ fn systems_run_every_frame() {
 
 **`未找到 QArchitecture 资源：请先调用 App::install_architecture::<A>()`**
 
-在装插件之前就用了 `Res<QArchitecture>` 或 `app.architecture()`。
+在装插件之前就用了 `NonSend<QArchitecture>` 或 `app.architecture()`。
 
 **消息读不到**
 
 按顺序检查：① 事件类型 derive 了 `Message` 吗；② 事件真的被发出了吗（发送时有没有订阅者不影响桥接，桥接本身就是订阅者）；③ 是不是在同一帧读的——需要等一帧。
 
-**`Res<QArchitecture>` 和别的系统冲突**
+**`NonSend<QArchitecture>` 和别的系统冲突**
 
-`Res<T>` 是共享只读借用，本身不会冲突。真正冲突的话，通常是同时借了 `ResMut<QArchitecture>` 或某个宽泛查询（Bevy 0.19 里 `Query<Entity>` 之类的宽泛查询会和资源访问冲突，需要加 `Without<IsResource>`）。
+`NonSend<QArchitecture>` 与 `NonSendMut<QArchitecture>` 不能在同一个系统中同时借用。
+架构存储在 Bevy 的 NonSend 数据区，普通实体查询不访问它。
+宽泛查询与普通 `Resource` 的冲突仍按 Bevy 规则处理。
 
 ---
 

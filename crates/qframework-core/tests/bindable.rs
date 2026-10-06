@@ -1,8 +1,9 @@
 //! `BindableProperty` / `BindableList` / `BindableDictionary` 的行为测试。
 
+use std::cell::Cell;
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::rc::Rc;
 
 use qframework_core::prelude::*;
 
@@ -10,24 +11,24 @@ use qframework_core::prelude::*;
 fn property_modify_notifies_once_with_written_value() {
     let property = BindableProperty::new(0);
 
-    let calls = Arc::new(AtomicI32::new(0));
-    let last = Arc::new(AtomicI32::new(-1));
-    let call_sink = Arc::clone(&calls);
-    let value_sink = Arc::clone(&last);
+    let calls = Rc::new(Cell::new(0));
+    let last = Rc::new(Cell::new(-1));
+    let call_sink = Rc::clone(&calls);
+    let value_sink = Rc::clone(&last);
 
     let unregister = property.register(move |value| {
-        call_sink.fetch_add(1, Ordering::SeqCst);
-        value_sink.store(*value, Ordering::SeqCst);
+        call_sink.set(call_sink.get() + 1);
+        value_sink.set(*value);
     });
 
     property.modify(|count| *count += 5);
     assert_eq!(property.get(), 5);
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
-    assert_eq!(last.load(Ordering::SeqCst), 5);
+    assert_eq!(calls.get(), 1);
+    assert_eq!(last.get(), 5);
 
     property.set(9);
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
-    assert_eq!(last.load(Ordering::SeqCst), 9);
+    assert_eq!(calls.get(), 2);
+    assert_eq!(last.get(), 9);
 
     unregister.unregister();
 }
@@ -35,18 +36,18 @@ fn property_modify_notifies_once_with_written_value() {
 #[test]
 fn register_with_init_value_delivers_current_value_first() {
     let property = BindableProperty::new(7);
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let sink = Arc::clone(&seen);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = Rc::clone(&seen);
 
     let unregister = property.register_with_init_value(move |value| {
-        sink.lock().unwrap().push(*value);
+        sink.borrow_mut().push(*value);
     });
 
     property.set(8);
     unregister.unregister();
     property.set(9);
 
-    assert_eq!(*seen.lock().unwrap(), vec![7, 8]);
+    assert_eq!(*seen.borrow_mut(), vec![7, 8]);
 }
 
 #[test]
@@ -60,28 +61,28 @@ fn with_value_reads_without_cloning() {
 fn bindable_list_emits_add_remove_and_count_events() {
     let list = BindableList::new();
 
-    let adds = Arc::new(AtomicI32::new(0));
-    let counts = Arc::new(AtomicI32::new(-1));
-    let add_sink = Arc::clone(&adds);
-    let count_sink = Arc::clone(&counts);
+    let adds = Rc::new(Cell::new(0));
+    let counts = Rc::new(Cell::new(-1));
+    let add_sink = Rc::clone(&adds);
+    let count_sink = Rc::clone(&counts);
 
     let _on_add = list.on_add(move |event| {
         assert_eq!(event.index, 0);
         assert_eq!(event.value, 10);
-        add_sink.fetch_add(1, Ordering::SeqCst);
+        add_sink.set(add_sink.get() + 1);
     });
     let _on_count = list.on_count_changed(move |event| {
-        count_sink.store(event.count as i32, Ordering::SeqCst);
+        count_sink.set(event.count as i32);
     });
 
     assert_eq!(list.add(10), 0);
     assert_eq!(list.len(), 1);
-    assert_eq!(adds.load(Ordering::SeqCst), 1);
-    assert_eq!(counts.load(Ordering::SeqCst), 1);
+    assert_eq!(adds.get(), 1);
+    assert_eq!(counts.get(), 1);
 
     assert_eq!(list.remove_at(0), Some(10));
     assert!(list.is_empty());
-    assert_eq!(counts.load(Ordering::SeqCst), 0);
+    assert_eq!(counts.get(), 0);
 }
 
 #[test]
@@ -102,27 +103,27 @@ fn bindable_list_with_items_avoids_snapshot_clone() {
 fn bindable_dictionary_emits_add_replace_remove() {
     let dictionary = BindableDictionary::new();
 
-    let adds = Arc::new(AtomicI32::new(0));
-    let replaces = Arc::new(AtomicI32::new(0));
-    let add_sink = Arc::clone(&adds);
-    let replace_sink = Arc::clone(&replaces);
+    let adds = Rc::new(Cell::new(0));
+    let replaces = Rc::new(Cell::new(0));
+    let add_sink = Rc::clone(&adds);
+    let replace_sink = Rc::clone(&replaces);
 
     let _on_add = dictionary.on_add(move |_| {
-        add_sink.fetch_add(1, Ordering::SeqCst);
+        add_sink.set(add_sink.get() + 1);
     });
     let _on_replace = dictionary.on_replace(move |event| {
         assert_eq!(event.previous, 1);
         assert_eq!(event.current, 2);
-        replace_sink.fetch_add(1, Ordering::SeqCst);
+        replace_sink.set(replace_sink.get() + 1);
     });
 
     dictionary.insert("hp", 1);
-    assert_eq!(adds.load(Ordering::SeqCst), 1);
+    assert_eq!(adds.get(), 1);
     assert_eq!(dictionary.get(&"hp"), Some(1));
 
     dictionary.insert("hp", 2);
-    assert_eq!(adds.load(Ordering::SeqCst), 1);
-    assert_eq!(replaces.load(Ordering::SeqCst), 1);
+    assert_eq!(adds.get(), 1);
+    assert_eq!(replaces.get(), 1);
     assert_eq!(dictionary.get(&"hp"), Some(2));
 
     assert!(dictionary.contains_key(&"hp"));

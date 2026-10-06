@@ -2,6 +2,7 @@
 //!
 //! 这是 [QFramework](https://github.com/liangxiegame/QFramework) 的 Rust 实现核心，
 //! 与引擎无关，只依赖标准库。若要在 Bevy 中使用，请配合 `qframework-bevy`。
+//! 所有架构、层对象和回调都在单线程使用，共享所有权使用 `Rc`。
 //!
 //! ## 四层架构
 //!
@@ -55,13 +56,18 @@
 //!     }
 //! }
 //!
-//! // 3. 组装架构
-//! let architecture = ArchitectureBuilder::new("CounterApp")
-//!     .model(CounterModel::default())
-//!     .build();
+//! // 3. 定义应用，通过共享入口访问架构
+//! struct CounterApp;
+//! impl QApplication for CounterApp {
+//!     fn build() -> ArchitectureBuilder {
+//!         ArchitectureBuilder::new("CounterApp").model(CounterModel::default())
+//!     }
+//! }
+//! let architecture = CounterApp::interface();
 //!
 //! architecture.send_command(IncreaseCountCommand);
 //! assert_eq!(architecture.get_model::<CounterModel>().count.get(), 1);
+//! CounterApp::deinit_interface();
 //! ```
 //!
 //! ## 生命周期钩子
@@ -80,6 +86,7 @@
 //! struct AppStarted;
 //! ```
 
+pub mod application;
 pub mod architecture;
 pub mod bindable;
 pub mod command;
@@ -90,6 +97,7 @@ pub mod layers;
 pub mod query;
 pub mod unregister;
 
+pub use application::QApplication;
 pub use architecture::{Architecture, ArchitectureBuilder};
 pub use bindable::{
     BindableDictionary, BindableList, BindableProperty, DictAdd, DictClear, DictCountChanged,
@@ -101,8 +109,8 @@ pub use event::{EasyEvent, TypeEventSystem};
 pub use ioc::IOCContainer;
 pub use layers::{
     ArchRef, HasArchRef, ICanGetArchitecture, ICanGetModel, ICanGetSystem, ICanGetUtility,
-    ICanRegisterEvent, ICanSendCommand, ICanSendEvent, ICanSendQuery, IController, IModel,
-    ISystem, IUtility,
+    ICanRegisterEvent, ICanSendCommand, ICanSendEvent, ICanSendQuery, IController, IModel, ISystem,
+    IUtility,
 };
 pub use query::IQuery;
 pub use unregister::{IUnRegister, IUnRegisterList};
@@ -116,8 +124,9 @@ pub mod prelude {
         ArchRef, Architecture, ArchitectureBuilder, BindableDictionary, BindableList,
         BindableProperty, CommandContext, DictAdd, DictClear, DictCountChanged, DictRemove,
         DictReplace, EasyEvent, HasArchRef, ICanGetArchitecture, ICanGetModel, ICanGetSystem,
-        ICanGetUtility, ICanRegisterEvent, ICanSendCommand, ICanSendEvent, ICanSendQuery,
-        ICommand, IController, IOCContainer, IModel, IQuery, ISystem, IUnRegister, IUnRegisterList,
-        IUtility, ListAdd, ListClear, ListCountChanged, ListRemove, QueryContext, TypeEventSystem,
+        ICanGetUtility, ICanRegisterEvent, ICanSendCommand, ICanSendEvent, ICanSendQuery, ICommand,
+        IController, IModel, IOCContainer, IQuery, ISystem, IUnRegister, IUnRegisterList, IUtility,
+        ListAdd, ListClear, ListCountChanged, ListRemove, QApplication, QueryContext,
+        TypeEventSystem,
     };
 }

@@ -90,6 +90,12 @@ fn try_expand(input: DeriveInput, layer: Layer) -> syn::Result<TokenStream> {
 
     // --- 架构引用相关实现 -------------------------------------------------
     let arch_impls = arch_field.as_ref().map(|arch| {
+        let access = match &lifecycle.architecture {
+            Some(application) => quote! {
+                self.#arch.get_or_bind(<#application as ::qframework_core::QApplication>::interface)
+            },
+            None => quote! { self.#arch.get() },
+        };
         quote! {
             impl #impl_generics ::qframework_core::HasArchRef for #struct_name #ty_generics #where_clause {
                 fn arch_ref(&self) -> &::qframework_core::ArchRef {
@@ -98,8 +104,8 @@ fn try_expand(input: DeriveInput, layer: Layer) -> syn::Result<TokenStream> {
             }
 
             impl #impl_generics ::qframework_core::ICanGetArchitecture for #struct_name #ty_generics #where_clause {
-                fn architecture(&self) -> ::std::sync::Arc<::qframework_core::Architecture> {
-                    self.#arch.get()
+                fn architecture(&self) -> ::std::rc::Rc<::qframework_core::Architecture> {
+                    #access
                 }
             }
         }
@@ -114,12 +120,10 @@ fn try_expand(input: DeriveInput, layer: Layer) -> syn::Result<TokenStream> {
     });
 
     // --- 层接口实现 -------------------------------------------------------
-    // 泛型结构体需要额外保证 `Send + Sync + 'static`（层接口的 supertrait）。
+    // 单线程层的泛型实现只追加生命周期约束。
     let mut layer_generics = input.generics.clone();
     if !layer_generics.params.is_empty() {
-        let predicate: syn::WherePredicate = syn::parse_quote!(
-            #struct_name #ty_generics: ::core::marker::Send + ::core::marker::Sync + 'static
-        );
+        let predicate: syn::WherePredicate = syn::parse_quote!(#struct_name #ty_generics: 'static);
         layer_generics
             .make_where_clause()
             .predicates
@@ -228,10 +232,24 @@ fn parse_lifecycle(attrs: &[Attribute], layer: Layer) -> syn::Result<Lifecycle> 
                 lifecycle.init = Some(name_value.value.clone());
             } else if name_value.path.is_ident("deinit") {
                 lifecycle.deinit = Some(name_value.value.clone());
+            } else if layer == Layer::Controller && name_value.path.is_ident("architecture") {
+                if lifecycle.architecture.is_some() {
+                    return Err(syn::Error::new_spanned(
+                        &entry,
+                        "duplicate controller architecture",
+                    ));
+                }
+                let value = &name_value.value;
+                lifecycle.architecture = Some(syn::parse2(quote! { #value })?);
             } else {
                 return Err(syn::Error::new_spanned(
                     &name_value.path,
-                    format!("`#[{helper}(...)]` 只支持 `init` 与 `deinit`"),
+                    if layer == Layer::Controller {
+                        "`#[controller(...)]` supports `init`, `deinit` and `architecture`"
+                            .to_owned()
+                    } else {
+                        format!("`#[{helper}(...)]` 只支持 `init` 与 `deinit`")
+                    },
                 ));
             }
         }
@@ -242,6 +260,7 @@ fn parse_lifecycle(attrs: &[Attribute], layer: Layer) -> syn::Result<Lifecycle> 
 
 #[derive(Default)]
 struct Lifecycle {
+    architecture: Option<syn::Type>,
     init: Option<Expr>,
     deinit: Option<Expr>,
 }

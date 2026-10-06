@@ -18,7 +18,8 @@
 //! Controller / System / Model 需要一个 `arch: ArchRef` 字段（可用 `#[arch]` 标记
 //! 其它名字的字段），Utility 不需要。
 
-use std::sync::{Arc, OnceLock, Weak};
+use std::cell::OnceCell;
+use std::rc::{Rc, Weak};
 
 use crate::architecture::Architecture;
 use crate::command::ICommand;
@@ -31,7 +32,7 @@ use crate::unregister::IUnRegister;
 /// `arch`），注册时由架构自动注入。内部保存 [`Weak`] 引用，避免与架构形成
 /// 引用环导致内存泄漏。
 #[derive(Default)]
-pub struct ArchRef(OnceLock<Weak<Architecture>>);
+pub struct ArchRef(OnceCell<Weak<Architecture>>);
 
 impl ArchRef {
     /// 创建一个尚未绑定的引用。
@@ -40,18 +41,26 @@ impl ArchRef {
     }
 
     /// 绑定到指定架构（由框架在注册时调用）。
-    pub fn set(&self, architecture: &Arc<Architecture>) {
-        let _ = self.0.set(Arc::downgrade(architecture));
+    pub fn set(&self, architecture: &Rc<Architecture>) {
+        let _ = self.0.set(Rc::downgrade(architecture));
     }
 
     /// 取得架构句柄，未绑定时 panic。
-    pub fn get(&self) -> Arc<Architecture> {
+    pub fn get(&self) -> Rc<Architecture> {
         self.try_get()
             .expect("ArchRef 尚未绑定 Architecture：请通过 ArchitectureBuilder 注册该对象")
     }
 
+    /// 首次访问时绑定默认架构；显式注入的架构优先，过期引用不会重新绑定。
+    pub fn get_or_bind(&self, default: impl FnOnce() -> Rc<Architecture>) -> Rc<Architecture> {
+        self.0
+            .get_or_init(|| Rc::downgrade(&default()))
+            .upgrade()
+            .expect("ArchRef points to an expired architecture; create a new controller")
+    }
+
     /// 尝试取得架构句柄。
-    pub fn try_get(&self) -> Option<Arc<Architecture>> {
+    pub fn try_get(&self) -> Option<Rc<Architecture>> {
         self.0.get().and_then(Weak::upgrade)
     }
 
@@ -84,18 +93,18 @@ pub trait HasArchRef {
 /// 能取得所属架构。
 pub trait ICanGetArchitecture {
     /// 返回所属架构。
-    fn architecture(&self) -> Arc<Architecture>;
+    fn architecture(&self) -> Rc<Architecture>;
 }
 
 /// 能取得 Model。
 pub trait ICanGetModel: ICanGetArchitecture {
     /// 取得已注册的 Model。
-    fn get_model<M: IModel>(&self) -> Arc<M> {
+    fn get_model<M: IModel>(&self) -> Rc<M> {
         self.architecture().get_model::<M>()
     }
 
     /// 取得已注册的 Model，不存在时返回 `None`。
-    fn try_get_model<M: IModel>(&self) -> Option<Arc<M>> {
+    fn try_get_model<M: IModel>(&self) -> Option<Rc<M>> {
         self.architecture().try_get_model::<M>()
     }
 }
@@ -103,7 +112,7 @@ pub trait ICanGetModel: ICanGetArchitecture {
 /// 能取得 System。
 pub trait ICanGetSystem: ICanGetArchitecture {
     /// 取得已注册的 System。
-    fn get_system<S: ISystem>(&self) -> Arc<S> {
+    fn get_system<S: ISystem>(&self) -> Rc<S> {
         self.architecture().get_system::<S>()
     }
 }
@@ -111,7 +120,7 @@ pub trait ICanGetSystem: ICanGetArchitecture {
 /// 能取得 Utility。
 pub trait ICanGetUtility: ICanGetArchitecture {
     /// 取得已注册的 Utility。
-    fn get_utility<U: IUtility>(&self) -> Arc<U> {
+    fn get_utility<U: IUtility>(&self) -> Rc<U> {
         self.architecture().get_utility::<U>()
     }
 }
@@ -150,7 +159,7 @@ pub trait ICanRegisterEvent: ICanGetArchitecture {
     /// 注册事件监听，返回注销句柄。
     fn register_event<E: 'static, F>(&self, handler: F) -> IUnRegister
     where
-        F: Fn(&E) + Send + Sync + 'static,
+        F: FnMut(&E) + 'static,
     {
         self.architecture().register_event::<E, F>(handler)
     }
@@ -165,6 +174,9 @@ pub trait ICanRegisterEvent: ICanGetArchitecture {
 /// 只能通过 Command 改变状态，不能发送事件（但可以注册事件）。
 ///
 /// 用 `#[derive(IController)]` 自动实现。
+///
+/// Controller 不存入 IOC，可由主线程场景节点实现。
+/// 所有层和事件回调都在单线程使用，可持有 `Rc`、`RefCell` 和引擎节点。
 pub trait IController:
     HasArchRef
     + ICanGetModel
@@ -172,8 +184,6 @@ pub trait IController:
     + ICanSendCommand
     + ICanSendQuery
     + ICanRegisterEvent
-    + Send
-    + Sync
     + 'static
 {
     /// 架构初始化完成后调用。
@@ -192,8 +202,6 @@ pub trait ISystem:
     + ICanGetUtility
     + ICanSendEvent
     + ICanRegisterEvent
-    + Send
-    + Sync
     + 'static
 {
     /// 架构初始化完成后调用（在 Model 之后）。
@@ -207,7 +215,7 @@ pub trait ISystem:
 /// 只能使用 Utility 并发送事件，不能反向获取 System / Controller。
 ///
 /// 用 `#[derive(IModel)]` 自动实现。
-pub trait IModel: HasArchRef + ICanGetUtility + ICanSendEvent + Send + Sync + 'static {
+pub trait IModel: HasArchRef + ICanGetUtility + ICanSendEvent + 'static {
     /// 架构初始化完成后调用（在 System 之前）。
     fn init(&self) {}
     /// 架构销毁时调用。
@@ -217,7 +225,7 @@ pub trait IModel: HasArchRef + ICanGetUtility + ICanSendEvent + Send + Sync + 's
 /// 工具层：基础设施（存储、序列化、SDK 接入），不承载业务。
 ///
 /// 用 `#[derive(IUtility)]` 自动实现。
-pub trait IUtility: Send + Sync + 'static {
+pub trait IUtility: 'static {
     /// 架构初始化完成后调用。
     fn init(&self) {}
     /// 架构销毁时调用。

@@ -1,11 +1,13 @@
 //! 成就系统：监听各模块的事件，决定解锁哪些成就。
 
-use std::sync::{Arc, Mutex};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use qframework_core::prelude::*;
 
 use crate::event::{
-    AchievementUnlockedEvent, EnemyDefeatedEvent, GameStartedEvent, ItemPurchasedEvent, LevelUpEvent,
+    AchievementUnlockedEvent, EnemyDefeatedEvent, GameStartedEvent, ItemPurchasedEvent,
+    LevelUpEvent,
 };
 use crate::model::{AchievementModel, ItemId};
 use crate::utility::LogUtility;
@@ -17,12 +19,12 @@ use crate::utility::LogUtility;
 /// 这正是分层规则在提示你「这是业务逻辑」。
 ///
 /// 订阅回调必须是 `'static` 的，**不能捕获 `&self`**。需要访问 Model 时，
-/// 先把 `Arc<Architecture>` 取出来捕获进闭包。
+/// 先把 `Rc<Architecture>` 取出来捕获进闭包。
 #[derive(Default, ISystem)]
 #[system(init = Self::subscribe)]
 pub struct AchievementSystem {
     arch: ArchRef,
-    subscriptions: Mutex<IUnRegisterList>,
+    subscriptions: RefCell<IUnRegisterList>,
 }
 
 impl AchievementSystem {
@@ -31,14 +33,14 @@ impl AchievementSystem {
         let log = self.get_utility::<LogUtility>();
 
         // ① 只监听、不碰数据：ICanRegisterEvent 就够了
-        let log_sink = Arc::clone(&log);
+        let log_sink = Rc::clone(&log);
         self.track(self.register_event::<GameStartedEvent, _>(move |_| {
             log_sink.section("成就系统启动");
             log_sink.info("已就绪，开始监听事件");
         }));
 
         // ② 需要「读事件 + 改 Model」：额外捕获架构句柄
-        let handle = Arc::clone(&architecture);
+        let handle = Rc::clone(&architecture);
         self.track(self.register_event::<ItemPurchasedEvent, _>(move |event| {
             let achievements = handle.get_model::<AchievementModel>();
 
@@ -53,8 +55,8 @@ impl AchievementSystem {
         }));
 
         // ③ 击败敌人
-        let handle = Arc::clone(&architecture);
-        let log_sink = Arc::clone(&log);
+        let handle = Rc::clone(&architecture);
+        let log_sink = Rc::clone(&log);
         self.track(self.register_event::<EnemyDefeatedEvent, _>(move |event| {
             let achievements = handle.get_model::<AchievementModel>();
             achievements.unlock("初战告捷");
@@ -67,7 +69,7 @@ impl AchievementSystem {
         }));
 
         // ④ 升级
-        let handle = Arc::clone(&architecture);
+        let handle = Rc::clone(&architecture);
         self.track(self.register_event::<LevelUpEvent, _>(move |event| {
             if event.level >= 2 {
                 handle.get_model::<AchievementModel>().unlock("初露锋芒");
@@ -75,7 +77,7 @@ impl AchievementSystem {
         }));
 
         // ⑤ 自己也关心成就解锁，用来打日志
-        let log_sink = Arc::clone(&log);
+        let log_sink = Rc::clone(&log);
         self.track(
             self.register_event::<AchievementUnlockedEvent, _>(move |event| {
                 log_sink.info(format_args!("解锁成就「{}」", event.title));
@@ -85,7 +87,7 @@ impl AchievementSystem {
 
     /// 收集注销句柄，`IUnRegisterList` 在 `Drop` 时会自动清理。
     fn track(&self, unregister: IUnRegister) {
-        self.subscriptions.lock().unwrap().add(unregister);
+        self.subscriptions.borrow_mut().add(unregister);
     }
 
     /// 已解锁的成就数量。

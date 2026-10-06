@@ -67,11 +67,30 @@ fn build_app() -> App {
 }
 
 #[test]
+fn bevy_worlds_and_shared_application_keep_separate_instances() {
+    let mut first = build_app();
+    let mut second = build_app();
+    let shared = TestApp::interface();
+
+    first.architecture().send_command(IncreaseCountCommand);
+    assert_eq!(first.architecture().send_query(GetCountQuery), 1);
+    assert_eq!(second.architecture().send_query(GetCountQuery), 0);
+    assert_eq!(shared.send_query(GetCountQuery), 0);
+    assert!(!std::rc::Rc::ptr_eq(&first.architecture(), &shared));
+
+    first.cleanup();
+    assert!(second.architecture().is_inited());
+    assert!(shared.is_inited());
+    second.cleanup();
+    TestApp::deinit_interface();
+}
+
+#[test]
 fn architecture_is_available_as_resource() {
     let mut app = build_app();
     app.update();
 
-    let architecture = app.world().resource::<QArchitecture>();
+    let architecture = app.world().non_send::<QArchitecture>();
     assert_eq!(architecture.name(), "TestApp");
     assert!(architecture.is_inited());
     assert!(architecture.try_get_model::<CounterModel>().is_some());
@@ -89,7 +108,7 @@ fn bevy_systems_can_send_commands() {
 
     app.update();
 
-    let architecture = app.world().resource::<QArchitecture>();
+    let architecture = app.world().non_send::<QArchitecture>();
     assert_eq!(architecture.send_query(GetCountQuery), 2);
 }
 
@@ -98,7 +117,7 @@ fn qframework_events_become_bevy_messages() {
     let mut app = build_app();
 
     {
-        let architecture = app.world().resource::<QArchitecture>().arc();
+        let architecture = app.world().non_send::<QArchitecture>().rc();
         architecture.send_command(IncreaseCountCommand);
         architecture.send_command(IncreaseCountCommand);
     }
@@ -114,14 +133,14 @@ fn qframework_events_become_bevy_messages() {
 #[derive(Component, Default)]
 struct DisplayedCount(i32);
 
-fn tick(architecture: Res<QArchitecture>, mut ticks: Local<u32>) {
+fn tick(architecture: NonSend<QArchitecture>, mut ticks: Local<u32>) {
     if *ticks < 4 {
         architecture.send_command(IncreaseCountCommand);
         *ticks += 1;
     }
 }
 
-fn refresh_scene(architecture: Res<QArchitecture>, mut nodes: Query<&mut DisplayedCount>) {
+fn refresh_scene(architecture: NonSend<QArchitecture>, mut nodes: Query<&mut DisplayedCount>) {
     for mut node in &mut nodes {
         node.0 = architecture.send_query(GetCountQuery);
     }
@@ -139,7 +158,7 @@ fn bevy_systems_update_scene_from_architecture() {
         app.update();
     }
 
-    let architecture = app.world().resource::<QArchitecture>();
+    let architecture = app.world().non_send::<QArchitecture>();
     assert_eq!(architecture.send_query(GetCountQuery), 4);
     assert_eq!(app.world().get::<DisplayedCount>(node).unwrap().0, 4);
 }

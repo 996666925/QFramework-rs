@@ -4,10 +4,11 @@
 //! 它们是 MVVM 风格的数据绑定基础：Model 持有数据，UI（Controller）订阅变化，
 //! 数据一变就自动刷新，避免轮询或手动刷新。
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
-use std::sync::{Arc, RwLock};
+use std::rc::Rc;
 
 use crate::event::EasyEvent;
 use crate::unregister::IUnRegister;
@@ -25,22 +26,29 @@ use crate::unregister::IUnRegister;
 /// count.set_value_without_event(2); // 静默写入，不触发回调
 /// assert_eq!(count.get(), 2);
 /// ```
+///
+/// 绑定属性只在单线程共享，不能移动到工作线程：
+/// ```compile_fail
+/// use qframework_core::BindableProperty;
+/// let property = BindableProperty::new(0);
+/// std::thread::spawn(move || property.set(1));
+/// ```
 pub struct BindableProperty<T> {
-    inner: Arc<BindablePropertyInner<T>>,
+    inner: Rc<BindablePropertyInner<T>>,
 }
 
 struct BindablePropertyInner<T> {
-    value: RwLock<T>,
-    on_changed: Arc<EasyEvent<T>>,
+    value: RefCell<T>,
+    on_changed: Rc<EasyEvent<T>>,
 }
 
 impl<T> BindableProperty<T> {
     /// 用初始值创建。
     pub fn new(value: T) -> Self {
         Self {
-            inner: Arc::new(BindablePropertyInner {
-                value: RwLock::new(value),
-                on_changed: Arc::new(EasyEvent::new()),
+            inner: Rc::new(BindablePropertyInner {
+                value: RefCell::new(value),
+                on_changed: Rc::new(EasyEvent::new()),
             }),
         }
     }
@@ -49,7 +57,7 @@ impl<T> BindableProperty<T> {
 impl<T> Clone for BindableProperty<T> {
     fn clone(&self) -> Self {
         Self {
-            inner: Arc::clone(&self.inner),
+            inner: Rc::clone(&self.inner),
         }
     }
 }
@@ -60,26 +68,26 @@ impl<T: Default> Default for BindableProperty<T> {
     }
 }
 
-impl<T: Clone + Send + Sync + 'static> BindableProperty<T> {
+impl<T: Clone + 'static> BindableProperty<T> {
     /// 读取当前值（返回拷贝）。
     pub fn get(&self) -> T {
-        self.inner.value.read().unwrap().clone()
+        self.inner.value.borrow().clone()
     }
 
     /// 以只读方式访问当前值，避免拷贝。
     ///
     /// 值比较大（例如 `Vec`）或只需要读取其中某个字段时，用这个比 [`get`](Self::get) 更省。
     ///
-    /// 注意：不要在闭包里再操作同一个属性（`set` / `modify` / `get`），会死锁。
+    /// 闭包持有只读借用；可读取同一属性，但不能修改它，否则会发生借用冲突 panic。
     pub fn with_value<R>(&self, f: impl FnOnce(&T) -> R) -> R {
-        let guard = self.inner.value.read().unwrap();
+        let guard = self.inner.value.borrow();
         f(&guard)
     }
 
     /// 写入新值并通知所有订阅者。
     pub fn set(&self, value: T) {
         let current = {
-            let mut guard = self.inner.value.write().unwrap();
+            let mut guard = self.inner.value.borrow_mut();
             *guard = value;
             guard.clone()
         };
@@ -88,20 +96,17 @@ impl<T: Clone + Send + Sync + 'static> BindableProperty<T> {
 
     /// 写入新值但**不**触发回调。适合初始化或批量同步场景。
     pub fn set_value_without_event(&self, value: T) {
-        let mut guard = self.inner.value.write().unwrap();
+        let mut guard = self.inner.value.borrow_mut();
         *guard = value;
     }
 
     /// 就地修改值并通知订阅者。
     ///
-    /// 闭包在整个「读-改-写」过程中持有写锁，因此 `modify` 是**原子**的：
-    /// `count += 1` 这类复合操作应当使用它，而不是 `get()` 后再 `set()`——
-    /// 后者在多线程（例如 Bevy 并行系统）下会丢更新。
-    ///
-    /// 注意：不要在闭包里再操作同一个属性，会死锁。
+    /// 闭包持有可变借用，结束后释放借用并同步通知一次。
+    /// 不要在闭包内读写同一个属性，否则会发生借用冲突 panic。
     pub fn modify(&self, f: impl FnOnce(&mut T)) {
         let current = {
-            let mut guard = self.inner.value.write().unwrap();
+            let mut guard = self.inner.value.borrow_mut();
             f(&mut guard);
             guard.clone()
         };
@@ -109,26 +114,31 @@ impl<T: Clone + Send + Sync + 'static> BindableProperty<T> {
     }
 
     /// 订阅值变化。
-    pub fn register(&self, handler: impl Fn(&T) + Send + Sync + 'static) -> IUnRegister {
-        Arc::clone(&self.inner.on_changed).register(handler)
+    pub fn register(&self, handler: impl FnMut(&T) + 'static) -> IUnRegister {
+        Rc::clone(&self.inner.on_changed).register(handler)
     }
 
     /// 订阅值变化，并立即用当前值回调一次。
     ///
-    /// 实现上**先注册、再读取当前值回调**，因此不会漏掉注册窗口内发生的变更；
-    /// 并发写入时可能出现一次重复回调，但不会丢更新。
+    /// 先注册，再读取初值；初值回调 panic 时会自动撤销订阅。
     pub fn register_with_init_value<F>(&self, handler: F) -> IUnRegister
     where
-        F: Fn(&T) + Send + Sync + 'static,
+        F: FnMut(&T) + 'static,
     {
-        let handler = Arc::new(handler);
-        let shared = Arc::clone(&handler);
+        let handler = Rc::new(RefCell::new(handler));
+        let shared = Rc::clone(&handler);
 
-        let unregister =
-            Arc::clone(&self.inner.on_changed).register(move |value: &T| (*shared)(value));
+        let unregister = Rc::clone(&self.inner.on_changed)
+            .register(move |value: &T| (*shared.borrow_mut())(value));
 
         let current = self.get();
-        (*handler)(&current);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            (*handler.borrow_mut())(&current);
+        }));
+        if let Err(error) = result {
+            unregister.unregister();
+            std::panic::resume_unwind(error);
+        }
 
         unregister
     }
@@ -139,19 +149,21 @@ impl<T: Clone + Send + Sync + 'static> BindableProperty<T> {
     }
 }
 
-impl<T: fmt::Display + Clone + Send + Sync + 'static> fmt::Display for BindableProperty<T> {
+impl<T: fmt::Display + Clone + 'static> fmt::Display for BindableProperty<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.get(), f)
     }
 }
 
-impl<T: fmt::Debug + Clone + Send + Sync + 'static> fmt::Debug for BindableProperty<T> {
+impl<T: fmt::Debug + Clone + 'static> fmt::Debug for BindableProperty<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("BindableProperty").field(&self.get()).finish()
+        f.debug_tuple("BindableProperty")
+            .field(&self.get())
+            .finish()
     }
 }
 
-impl<T: PartialEq + Clone + Send + Sync + 'static> PartialEq<T> for BindableProperty<T> {
+impl<T: PartialEq + Clone + 'static> PartialEq<T> for BindableProperty<T> {
     fn eq(&self, other: &T) -> bool {
         &self.get() == other
     }
@@ -192,37 +204,37 @@ pub struct ListCountChanged {
 
 /// 可观察列表。
 ///
-/// 事件在数据写入**之后**发出（而不是持有锁期间发出），因此在多线程并发写入时，
-/// 事件的到达顺序不保证与写入顺序一致；但每个事件携带的值一定是当时真实写入的值。
+/// 事件在数据写入**之后**发出（此时已释放可变借用），
+/// 回调可以读取容器；回调中继续修改数据会产生嵌套通知。
 pub struct BindableList<T> {
-    inner: Arc<BindableListInner<T>>,
+    inner: Rc<BindableListInner<T>>,
 }
 
 struct BindableListInner<T> {
-    items: RwLock<Vec<T>>,
-    on_add: Arc<EasyEvent<ListAdd<T>>>,
-    on_remove: Arc<EasyEvent<ListRemove<T>>>,
-    on_clear: Arc<EasyEvent<ListClear>>,
-    on_count_changed: Arc<EasyEvent<ListCountChanged>>,
+    items: RefCell<Vec<T>>,
+    on_add: Rc<EasyEvent<ListAdd<T>>>,
+    on_remove: Rc<EasyEvent<ListRemove<T>>>,
+    on_clear: Rc<EasyEvent<ListClear>>,
+    on_count_changed: Rc<EasyEvent<ListCountChanged>>,
 }
 
 impl<T> BindableList<T> {
     /// 创建空列表。
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(BindableListInner {
-                items: RwLock::new(Vec::new()),
-                on_add: Arc::new(EasyEvent::new()),
-                on_remove: Arc::new(EasyEvent::new()),
-                on_clear: Arc::new(EasyEvent::new()),
-                on_count_changed: Arc::new(EasyEvent::new()),
+            inner: Rc::new(BindableListInner {
+                items: RefCell::new(Vec::new()),
+                on_add: Rc::new(EasyEvent::new()),
+                on_remove: Rc::new(EasyEvent::new()),
+                on_clear: Rc::new(EasyEvent::new()),
+                on_count_changed: Rc::new(EasyEvent::new()),
             }),
         }
     }
 
     /// 当前元素数量。
     pub fn len(&self) -> usize {
-        self.inner.items.read().unwrap().len()
+        self.inner.items.borrow().len()
     }
 
     /// 是否为空。
@@ -240,41 +252,41 @@ impl<T> Default for BindableList<T> {
 impl<T> Clone for BindableList<T> {
     fn clone(&self) -> Self {
         Self {
-            inner: Arc::clone(&self.inner),
+            inner: Rc::clone(&self.inner),
         }
     }
 }
 
-impl<T: Clone + Send + Sync + 'static> BindableList<T> {
+impl<T: Clone + 'static> BindableList<T> {
     /// 用一组初始值创建列表。
     pub fn from_vec(items: Vec<T>) -> Self {
         let list = Self::new();
-        *list.inner.items.write().unwrap() = items;
+        *list.inner.items.borrow_mut() = items;
         list
     }
 
     /// 取得指定位置的元素拷贝。
     pub fn get(&self, index: usize) -> Option<T> {
-        self.inner.items.read().unwrap().get(index).cloned()
+        self.inner.items.borrow().get(index).cloned()
     }
 
     /// 取得整个列表的拷贝。
     ///
     /// 只想读取时优先用 [`with_items`](Self::with_items)，可以避免整表拷贝。
     pub fn snapshot(&self) -> Vec<T> {
-        self.inner.items.read().unwrap().clone()
+        self.inner.items.borrow().clone()
     }
 
     /// 以只读方式访问元素切片，避免整表拷贝。
     pub fn with_items<R>(&self, f: impl FnOnce(&[T]) -> R) -> R {
-        let items = self.inner.items.read().unwrap();
+        let items = self.inner.items.borrow();
         f(&items)
     }
 
     /// 追加元素，返回其下标。
     pub fn add(&self, value: T) -> usize {
         let index = {
-            let mut items = self.inner.items.write().unwrap();
+            let mut items = self.inner.items.borrow_mut();
             items.push(value.clone());
             items.len() - 1
         };
@@ -287,7 +299,7 @@ impl<T: Clone + Send + Sync + 'static> BindableList<T> {
     /// 在指定位置插入元素。
     pub fn insert(&self, index: usize, value: T) {
         let actual = {
-            let mut items = self.inner.items.write().unwrap();
+            let mut items = self.inner.items.borrow_mut();
             let index = index.min(items.len());
             items.insert(index, value.clone());
             index
@@ -303,7 +315,7 @@ impl<T: Clone + Send + Sync + 'static> BindableList<T> {
     /// 移除指定位置的元素。
     pub fn remove_at(&self, index: usize) -> Option<T> {
         let value = {
-            let mut items = self.inner.items.write().unwrap();
+            let mut items = self.inner.items.borrow_mut();
             if index < items.len() {
                 Some(items.remove(index))
             } else {
@@ -322,7 +334,7 @@ impl<T: Clone + Send + Sync + 'static> BindableList<T> {
     /// 清空列表。
     pub fn clear(&self) {
         {
-            let mut items = self.inner.items.write().unwrap();
+            let mut items = self.inner.items.borrow_mut();
             if items.is_empty() {
                 return;
             }
@@ -334,29 +346,26 @@ impl<T: Clone + Send + Sync + 'static> BindableList<T> {
     }
 
     /// 订阅新增事件。
-    pub fn on_add(&self, handler: impl Fn(&ListAdd<T>) + Send + Sync + 'static) -> IUnRegister {
-        Arc::clone(&self.inner.on_add).register(handler)
+    pub fn on_add(&self, handler: impl FnMut(&ListAdd<T>) + 'static) -> IUnRegister {
+        Rc::clone(&self.inner.on_add).register(handler)
     }
 
     /// 订阅移除事件。
-    pub fn on_remove(
-        &self,
-        handler: impl Fn(&ListRemove<T>) + Send + Sync + 'static,
-    ) -> IUnRegister {
-        Arc::clone(&self.inner.on_remove).register(handler)
+    pub fn on_remove(&self, handler: impl FnMut(&ListRemove<T>) + 'static) -> IUnRegister {
+        Rc::clone(&self.inner.on_remove).register(handler)
     }
 
     /// 订阅清空事件。
-    pub fn on_clear(&self, handler: impl Fn(&ListClear) + Send + Sync + 'static) -> IUnRegister {
-        Arc::clone(&self.inner.on_clear).register(handler)
+    pub fn on_clear(&self, handler: impl FnMut(&ListClear) + 'static) -> IUnRegister {
+        Rc::clone(&self.inner.on_clear).register(handler)
     }
 
     /// 订阅数量变化事件。
     pub fn on_count_changed(
         &self,
-        handler: impl Fn(&ListCountChanged) + Send + Sync + 'static,
+        handler: impl FnMut(&ListCountChanged) + 'static,
     ) -> IUnRegister {
-        Arc::clone(&self.inner.on_count_changed).register(handler)
+        Rc::clone(&self.inner.on_count_changed).register(handler)
     }
 
     fn notify_count(&self) {
@@ -413,39 +422,39 @@ pub struct DictCountChanged {
 
 /// 可观察字典。
 ///
-/// 事件在数据写入**之后**发出（而不是持有锁期间发出），因此在多线程并发写入时，
-/// 事件的到达顺序不保证与写入顺序一致；但每个事件携带的值一定是当时真实写入的值。
+/// 事件在数据写入**之后**发出（此时已释放可变借用），
+/// 回调可以读取容器；回调中继续修改数据会产生嵌套通知。
 pub struct BindableDictionary<K, V> {
-    inner: Arc<BindableDictionaryInner<K, V>>,
+    inner: Rc<BindableDictionaryInner<K, V>>,
 }
 
 struct BindableDictionaryInner<K, V> {
-    entries: RwLock<HashMap<K, V>>,
-    on_add: Arc<EasyEvent<DictAdd<K, V>>>,
-    on_remove: Arc<EasyEvent<DictRemove<K, V>>>,
-    on_replace: Arc<EasyEvent<DictReplace<K, V>>>,
-    on_clear: Arc<EasyEvent<DictClear>>,
-    on_count_changed: Arc<EasyEvent<DictCountChanged>>,
+    entries: RefCell<HashMap<K, V>>,
+    on_add: Rc<EasyEvent<DictAdd<K, V>>>,
+    on_remove: Rc<EasyEvent<DictRemove<K, V>>>,
+    on_replace: Rc<EasyEvent<DictReplace<K, V>>>,
+    on_clear: Rc<EasyEvent<DictClear>>,
+    on_count_changed: Rc<EasyEvent<DictCountChanged>>,
 }
 
 impl<K, V> BindableDictionary<K, V> {
     /// 创建空字典。
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(BindableDictionaryInner {
-                entries: RwLock::new(HashMap::new()),
-                on_add: Arc::new(EasyEvent::new()),
-                on_remove: Arc::new(EasyEvent::new()),
-                on_replace: Arc::new(EasyEvent::new()),
-                on_clear: Arc::new(EasyEvent::new()),
-                on_count_changed: Arc::new(EasyEvent::new()),
+            inner: Rc::new(BindableDictionaryInner {
+                entries: RefCell::new(HashMap::new()),
+                on_add: Rc::new(EasyEvent::new()),
+                on_remove: Rc::new(EasyEvent::new()),
+                on_replace: Rc::new(EasyEvent::new()),
+                on_clear: Rc::new(EasyEvent::new()),
+                on_count_changed: Rc::new(EasyEvent::new()),
             }),
         }
     }
 
     /// 当前条目数量。
     pub fn len(&self) -> usize {
-        self.inner.entries.read().unwrap().len()
+        self.inner.entries.borrow().len()
     }
 
     /// 是否为空。
@@ -463,43 +472,43 @@ impl<K, V> Default for BindableDictionary<K, V> {
 impl<K, V> Clone for BindableDictionary<K, V> {
     fn clone(&self) -> Self {
         Self {
-            inner: Arc::clone(&self.inner),
+            inner: Rc::clone(&self.inner),
         }
     }
 }
 
 impl<K, V> BindableDictionary<K, V>
 where
-    K: Clone + Eq + Hash + Send + Sync + 'static,
-    V: Clone + Send + Sync + 'static,
+    K: Clone + Eq + Hash + 'static,
+    V: Clone + 'static,
 {
     /// 判断是否包含键。
     pub fn contains_key(&self, key: &K) -> bool {
-        self.inner.entries.read().unwrap().contains_key(key)
+        self.inner.entries.borrow().contains_key(key)
     }
 
     /// 取得值的拷贝。
     pub fn get(&self, key: &K) -> Option<V> {
-        self.inner.entries.read().unwrap().get(key).cloned()
+        self.inner.entries.borrow().get(key).cloned()
     }
 
     /// 取得整个字典的拷贝。
     ///
     /// 只想读取时优先用 [`with_entries`](Self::with_entries)，可以避免整表拷贝。
     pub fn snapshot(&self) -> HashMap<K, V> {
-        self.inner.entries.read().unwrap().clone()
+        self.inner.entries.borrow().clone()
     }
 
     /// 以只读方式访问字典，避免整表拷贝。
     pub fn with_entries<R>(&self, f: impl FnOnce(&HashMap<K, V>) -> R) -> R {
-        let entries = self.inner.entries.read().unwrap();
+        let entries = self.inner.entries.borrow();
         f(&entries)
     }
 
     /// 插入条目；若键已存在则触发替换事件。
     pub fn insert(&self, key: K, value: V) {
         let previous = {
-            let mut entries = self.inner.entries.write().unwrap();
+            let mut entries = self.inner.entries.borrow_mut();
             entries.insert(key.clone(), value.clone())
         };
 
@@ -520,7 +529,7 @@ where
 
     /// 移除条目。
     pub fn remove(&self, key: &K) -> Option<V> {
-        let value = { self.inner.entries.write().unwrap().remove(key) };
+        let value = { self.inner.entries.borrow_mut().remove(key) };
 
         if let Some(value) = value.clone() {
             self.inner.on_remove.send(&DictRemove {
@@ -536,7 +545,7 @@ where
     /// 清空字典。
     pub fn clear(&self) {
         {
-            let mut entries = self.inner.entries.write().unwrap();
+            let mut entries = self.inner.entries.borrow_mut();
             if entries.is_empty() {
                 return;
             }
@@ -548,37 +557,31 @@ where
     }
 
     /// 订阅新增事件。
-    pub fn on_add(&self, handler: impl Fn(&DictAdd<K, V>) + Send + Sync + 'static) -> IUnRegister {
-        Arc::clone(&self.inner.on_add).register(handler)
+    pub fn on_add(&self, handler: impl FnMut(&DictAdd<K, V>) + 'static) -> IUnRegister {
+        Rc::clone(&self.inner.on_add).register(handler)
     }
 
     /// 订阅移除事件。
-    pub fn on_remove(
-        &self,
-        handler: impl Fn(&DictRemove<K, V>) + Send + Sync + 'static,
-    ) -> IUnRegister {
-        Arc::clone(&self.inner.on_remove).register(handler)
+    pub fn on_remove(&self, handler: impl FnMut(&DictRemove<K, V>) + 'static) -> IUnRegister {
+        Rc::clone(&self.inner.on_remove).register(handler)
     }
 
     /// 订阅替换事件。
-    pub fn on_replace(
-        &self,
-        handler: impl Fn(&DictReplace<K, V>) + Send + Sync + 'static,
-    ) -> IUnRegister {
-        Arc::clone(&self.inner.on_replace).register(handler)
+    pub fn on_replace(&self, handler: impl FnMut(&DictReplace<K, V>) + 'static) -> IUnRegister {
+        Rc::clone(&self.inner.on_replace).register(handler)
     }
 
     /// 订阅清空事件。
-    pub fn on_clear(&self, handler: impl Fn(&DictClear) + Send + Sync + 'static) -> IUnRegister {
-        Arc::clone(&self.inner.on_clear).register(handler)
+    pub fn on_clear(&self, handler: impl FnMut(&DictClear) + 'static) -> IUnRegister {
+        Rc::clone(&self.inner.on_clear).register(handler)
     }
 
     /// 订阅数量变化事件。
     pub fn on_count_changed(
         &self,
-        handler: impl Fn(&DictCountChanged) + Send + Sync + 'static,
+        handler: impl FnMut(&DictCountChanged) + 'static,
     ) -> IUnRegister {
-        Arc::clone(&self.inner.on_count_changed).register(handler)
+        Rc::clone(&self.inner.on_count_changed).register(handler)
     }
 
     fn notify_count(&self) {

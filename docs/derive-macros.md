@@ -31,7 +31,7 @@ impl HasArchRef for CounterModel {
 }
 
 impl ICanGetArchitecture for CounterModel {
-    fn architecture(&self) -> Arc<Architecture> { self.arch.get() }
+    fn architecture(&self) -> Rc<Architecture> { self.arch.get() }
 }
 
 impl ICanGetUtility for CounterModel {}
@@ -85,6 +85,21 @@ impl SaveUtility {
 
 ## 生命周期钩子
 
+Controller 可同时声明所属应用，首次使用能力时自动绑定其共享架构：
+
+```rust
+#[derive(Default, IController)]
+#[controller(architecture = CounterApp, init = Self::start)]
+struct CounterController {
+    arch: ArchRef,
+}
+```
+
+`CounterApp` 实现核心 `QApplication`，宏生成的访问器调用 `CounterApp::interface()`。
+无需调用 `attach_controller` 或 Godot 的 `bind_architecture`。
+仍保留 `ArchRef` 字段以支持显式注入；已经绑定的架构优先，过期引用会报错而不会切换实例。
+`architecture` 选项仅适用于 Controller，应用类型支持模块路径和泛型。
+
 用层专属的辅助属性指定 `init` / `deinit`。值可以是**闭包**，也可以是**函数或方法路径**。
 
 ```rust
@@ -125,7 +140,7 @@ impl PlayerModel {
 struct HudController { arch: ArchRef }
 ```
 
-钩子接收的是 `&Self`（即 `&self`），因为层对象注册后就以 `Arc<Self>` 共享，不可能拿到 `&mut Self`。**所有可变状态必须用内部可变性**（`BindableProperty`、`Atomic*`、`Mutex`、`RwLock`）。
+钩子接收的是 `&Self`（即 `&self`），钩子内的可变状态需要内部可变性（`BindableProperty`、`Atomic*`、`RefCell`、`RefCell`）。Godot Controller 节点的 `ready` / `process` / `exit_tree` 回调仍可使用 `&mut self`，主线程私有状态也可使用 `Cell` / `RefCell`。
 
 ---
 
@@ -137,14 +152,17 @@ struct HudController { arch: ArchRef }
 #[derive(Default, IModel)]
 struct RegistryModel<T>
 where
-    T: Send + Sync + 'static,
+    T: 'static,
 {
     arch: ArchRef,
     payload: std::marker::PhantomData<T>,
 }
 ```
 
-展开后会带上 `where RegistryModel<T>: Send + Sync + 'static`，所以 `T` 不满足时错误会指向你的使用点，而不是宏展开处。
+展开后会带上 `where RegistryModel<T>: 'static`，所以 `T` 不满足时错误会指向你的使用点，而不是宏展开处。
+
+所有层只追加 `where Layer<T>: 'static`，可以持有 `Rc` / `RefCell`；Controller
+可以同时派生 `GodotClass` 与 `IController`，并持有 `Base<Node>` / `Gd<T>`。
 
 ---
 

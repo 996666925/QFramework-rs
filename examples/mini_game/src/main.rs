@@ -55,7 +55,7 @@ fn battle_report(mut reader: MessageReader<EnemyDefeatedEvent>) {
 /// 这里演示「引擎侧如何使用架构」：直接取 `QArchitecture` 资源，
 /// 用 Query 读数据，用 Utility 落盘。
 fn print_summary(app: &mut App) {
-    let architecture = app.world().resource::<QArchitecture>().arc();
+    let architecture = app.world().non_send::<QArchitecture>().rc();
 
     let player: PlayerSnapshot = architecture.send_query(GetPlayerSnapshotQuery);
     let inventory = architecture.send_query(GetInventoryQuery);
@@ -117,7 +117,7 @@ fn main() {
         // 2. 把 QFramework 事件桥接成 Bevy 消息
         .bridge_messages::<EnemyDefeatedEvent>()
         // 3. 表现层使用 Bevy 系统，先执行输入，再刷新 HUD
-        .init_resource::<HudState>()
+        .init_non_send::<HudState>()
         .add_systems(Startup, setup_hud)
         .add_systems(Update, (run_script, render_hud, battle_report).chain());
 

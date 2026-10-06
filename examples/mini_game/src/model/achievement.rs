@@ -18,7 +18,7 @@ pub struct AchievementModel {
 impl AchievementModel {
     /// 解锁一个成就；已解锁过则忽略。
     pub fn unlock(&self, title: &'static str) {
-        // 先读一次判断是否已经解锁（读锁在闭包结束后释放，不会和下面的写锁重叠）
+        // 先读一次判断是否已经解锁（读取借用在闭包结束后释放）
         let already = self.unlocked.with_items(|titles| titles.contains(&title));
         if already {
             return;

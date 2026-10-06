@@ -32,7 +32,7 @@ impl ICommand for IncreaseCountCommand {
 
     fn execute(&self, ctx: &CommandContext) {
         let model = ctx.get_model::<CounterModel>();
-        // `modify` 在一次写锁内完成「读-改-写」，多线程下不会丢更新
+        // `modify` 就地修改，释放借用后统一通知
         model.count.modify(|count| *count += 1);
         // Model 通过事件向上层通信，桥接插件会把它转成 Bevy 消息
         ctx.send_event(CountChangedMessage {
@@ -78,7 +78,7 @@ impl QApplication for CounterApp {
 // 表现层：Bevy 系统通过命令改变业务状态
 // ---------------------------------------------------------------------------
 
-fn increase_count(architecture: Res<QArchitecture>, mut frames: Local<u32>) {
+fn increase_count(architecture: NonSend<QArchitecture>, mut frames: Local<u32>) {
     if *frames < 3 {
         architecture.send_command(IncreaseCountCommand);
     }
@@ -108,7 +108,7 @@ fn main() {
         app.update();
     }
 
-    let architecture = app.world().resource::<QArchitecture>();
+    let architecture = app.world().non_send::<QArchitecture>();
     println!(
         "[Bevy System] 最终计数 = {}",
         architecture.send_query(GetCountQuery)

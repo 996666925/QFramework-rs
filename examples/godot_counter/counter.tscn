@@ -1,0 +1,35 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://ui.gd" id="1"]
+
+[node name="CounterScene" type="CounterScene"]
+
+[node name="Counter" type="CounterNode" parent="."]
+
+[node name="Display" type="Node2D" parent="Counter"]
+
+[node name="SpatialCounter" type="SpatialCounter" parent="."]
+
+[node name="UI" type="Control" parent="."]
+layout_mode = 0
+offset_right = 480.0
+offset_bottom = 240.0
+script = ExtResource("1")
+
+[node name="Count" type="Label" parent="UI"]
+layout_mode = 0
+offset_left = 40.0
+offset_top = 40.0
+offset_right = 440.0
+offset_bottom = 100.0
+theme_override_font_sizes/font_size = 32
+text = "Count: 0"
+horizontal_alignment = 1
+
+[node name="Increase" type="Button" parent="UI"]
+layout_mode = 0
+offset_left = 140.0
+offset_top = 130.0
+offset_right = 340.0
+offset_bottom = 178.0
+text = "+1"

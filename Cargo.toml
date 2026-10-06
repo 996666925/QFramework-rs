@@ -4,7 +4,9 @@ members = [
     "crates/qframework-core",
     "crates/qframework-macros",
     "crates/qframework-bevy",
+    "crates/qframework-godot",
     "examples/mini_game",
+    "examples/godot_counter",
 ]
 
 [workspace.package]
@@ -21,4 +23,6 @@ categories = ["game-development"]
 qframework-core = { version = "0.1.0", path = "crates/qframework-core" }
 qframework-macros = { version = "0.1.0", path = "crates/qframework-macros" }
 qframework-bevy = { version = "0.1.0", path = "crates/qframework-bevy" }
+qframework-godot = { version = "0.1.0", path = "crates/qframework-godot" }
 bevy = { version = "0.19", default-features = false }
+godot = { version = "0.5.5", default-features = false }

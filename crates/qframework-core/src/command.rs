@@ -20,9 +20,9 @@ use crate::context::CommandContext;
 ///     }
 /// }
 /// ```
-pub trait ICommand: Send + Sync + 'static {
+pub trait ICommand: 'static {
     /// 执行结果类型。
-    type Output: Send + 'static;
+    type Output: 'static;
 
     /// 执行命令。
     fn execute(&self, context: &CommandContext) -> Self::Output;

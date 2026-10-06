@@ -4,22 +4,22 @@
 //! 都会返回一个 [`IUnRegister`]。忘记注销是内存泄漏的常见来源，因此框架统一用
 //! 句柄来管理订阅的生命周期。
 
-use std::sync::Arc;
+use std::rc::Rc;
 
 /// 注销句柄。
 ///
 /// 调用 [`unregister`](IUnRegister::unregister) 即可取消对应的订阅。
-/// 句柄内部使用 [`Arc`]，可以安全地跨线程持有与拷贝。
+/// 句柄内部使用 [`Rc`]，可以在同一线程共享与拷贝。
 #[derive(Clone)]
 pub struct IUnRegister {
-    inner: Arc<dyn Fn() + Send + Sync>,
+    inner: Rc<dyn Fn()>,
 }
 
 impl IUnRegister {
     /// 用一段自定义逻辑构造注销句柄。
-    pub fn new(unregister: impl Fn() + Send + Sync + 'static) -> Self {
+    pub fn new(unregister: impl Fn() + 'static) -> Self {
         Self {
-            inner: Arc::new(unregister),
+            inner: Rc::new(unregister),
         }
     }
 

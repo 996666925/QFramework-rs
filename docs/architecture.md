@@ -118,7 +118,7 @@ C# 版靠「能力接口 + 扩展方法」，Rust 版用 trait 继承，效果�
 
 | 能力 trait | 提供的方法 |
 |---|---|
-| `ICanGetArchitecture` | `architecture() -> Arc<Architecture>` |
+| `ICanGetArchitecture` | `architecture() -> Rc<Architecture>` |
 | `ICanGetModel` | `get_model::<M>()` / `try_get_model::<M>()` |
 | `ICanGetSystem` | `get_system::<S>()` |
 | `ICanGetUtility` | `get_utility::<U>()` |
@@ -130,9 +130,9 @@ C# 版靠「能力接口 + 扩展方法」，Rust 版用 trait 继承，效果�
 然后层接口只继承自己该有的能力：
 
 ```rust
-pub trait IModel: HasArchRef + ICanGetUtility + ICanSendEvent + Send + Sync + 'static { .. }
+pub trait IModel: HasArchRef + ICanGetUtility + ICanSendEvent + 'static { .. }
 pub trait ISystem: HasArchRef + ICanGetModel + ICanGetSystem + ICanGetUtility
-                        + ICanSendEvent + ICanRegisterEvent + Send + Sync + 'static { .. }
+                        + ICanSendEvent + ICanRegisterEvent + 'static { .. }
 ```
 
 于是「Model 里调用 `get_system`」直接变成方法不存在：
@@ -183,12 +183,12 @@ error[E0599]: no method named `get_system` found for reference `&CounterModel` i
 
 - **QFramework 管「游戏业务逻辑」**：玩家属性、背包、关卡状态、成就、存档。
 - **Bevy ECS 管「场景与渲染」**：Transform、Sprite、Mesh、动画、物理。
-- **两者的桥**：`QArchitecture` 资源。Bevy 系统通过 `Res<QArchitecture>` 发命令、读数据；QFramework 的事件通过 `QEventBridgePlugin` 变成 Bevy 消息。
+- **两者的桥**：`QArchitecture` 资源。Bevy 系统通过 `NonSend<QArchitecture>` 发命令、读数据；QFramework 的事件通过 `QEventBridgePlugin` 变成 Bevy 消息。
 
 三层的数据流：
 
 ```
-Bevy 输入系统 ──→ Res<QArchitecture> ─→ send_command ─→ Command ─→ Model
+Bevy 输入系统 ──→ NonSend<QArchitecture> ─→ send_command ─→ Command ─→ Model
                                                                     │ send_event
                                                                     ▼
 Bevy 表现层 ←── MessageReader<M> ←── MessageWriter ←── QEventBridge ←┘
@@ -206,17 +206,18 @@ Bevy 表现层 ←── MessageReader<M> ←── MessageWriter ←── QEve
 
 | 方面 | C# QFramework | Rust 版 | 原因 |
 |---|---|---|---|
-| 架构实例 | `Architecture<T>.Interface` 静态单例 | `ArchitectureBuilder::build() -> Arc<Architecture>` | Rust 不鼓励全局可变状态；显式传入便于测试和多实例 |
+| 架构实例 | `Architecture<T>.Interface` 静态单例 | `QApplication::interface()` 按类型共享；builder 创建独立实例 | 日常使用免传递，测试与 Bevy 世界可保持隔离 |
 | 层的基类 | `AbstractModel` / `AbstractSystem` 等继承 | `#[derive(IModel)]` 等派生宏 | Rust 无继承；派生宏同样能消除样板代码 |
 | 架构引用 | 强引用字段，靠 `UnRegisterWhenGameObjectDestroyed` 防泄漏 | `ArchRef` 内部存 `Weak` | 让「不泄漏」成为默认行为而不是纪律 |
-| 订阅清理 | 手动调用 `UnRegisterWhen*` | `IUnRegisterList` 在 `Drop` 时自动注销 | RAII |
-| 线程模型 | Unity 主线程，基本单线程 | 可能跑在 Bevy 并行系统里 | **需要主动保证复合操作的原子性**，见下 |
+| 订阅清理 | 链式调用 `UnRegisterWhen*` | `IUnRegisterList` 在 `Drop` 时自动注销；Godot 支持链式绑定节点生命周期 | RAII 与引擎生命周期 |
+| 线程模型 | Unity 主线程 | 单线程；Bevy 使用 NonSend 数据 | 与原版使用方式一致，Rc / RefCell 管理共享状态 |
 | 命令返回值 | `ICommand<TResult>` 泛型接口 | `ICommand` 关联类型 `Output` | Rust 的一个类型只能实现一个 `ICommand` |
 | 查询 | `IQuery<TResult>` | `IQuery` 关联类型 `Result` | 同上 |
 | 事件路由 | CLR 类型作频道 | `TypeId` 作频道 | 等价 |
 | 集合绑定 | `BindableList` / `BindableDictionary` | 同名，接口更贴近 Rust 习惯 | — |
 
-**最大的差异是线程模型。** C# 版默认单线程，所以 `count.Value = count.Value + 1` 是安全的；Rust 版可能并发执行，必须写成 `count.modify(|c| *c += 1)`。详见[最佳实践](best-practices.md#三并发相关最重要的一节)。
+Rust 版同样采用单线程。`get()` 后 `set()` 可以使用，`modify()` 则便于一次修改后统一通知。
+注意 `RefCell` 的运行时借用规则，详见[最佳实践](best-practices.md#三单线程与借用)。
 
 ---
 
@@ -224,13 +225,14 @@ Bevy 表现层 ←── MessageReader<M> ←── MessageWriter ←── QEve
 
 ```
 qframework-core/          与引擎无关，运行时零依赖（只用 std）
+├── application.rs        QApplication / 按类型共享的 interface 入口
 ├── architecture.rs       Architecture / ArchitectureBuilder（中心枢纽）
 ├── layers.rs             四层接口 + 8 个能力接口 + ArchRef
 ├── command.rs            ICommand
 ├── query.rs              IQuery
 ├── context.rs            CommandContext / QueryContext（能力边界）
 ├── event.rs              TypeEventSystem / EasyEvent（类型事件总线）
-├── ioc.rs                IOCContainer（TypeId -> Arc<dyn Any>）
+├── ioc.rs                IOCContainer（TypeId -> Rc<dyn Any>）
 ├── bindable.rs           BindableProperty / BindableList / BindableDictionary
 └── unregister.rs         IUnRegister / IUnRegisterList
 
@@ -238,7 +240,7 @@ qframework-macros/        过程宏（唯一引入外部依赖的 crate）
 └── layer.rs              四个派生宏的公共展开逻辑
 
 qframework-bevy/          Bevy 0.19 集成
-├── app.rs                QApplication / QFrameworkPlugin / QArchitecture
+├── app.rs                QFrameworkPlugin / QArchitecture（重导出核心 QApplication）
 └── bridge.rs             QFramework 事件 -> Bevy Message
 ```
 

@@ -5,8 +5,8 @@
 //! 2. 管理 System / Model / Utility 的注册与两阶段初始化；
 //! 3. 作为 Command / Query 的中介。
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
+use std::cell::{Cell, OnceCell, RefCell};
+use std::rc::{Rc, Weak};
 
 use crate::command::ICommand;
 use crate::context::{CommandContext, QueryContext};
@@ -17,10 +17,10 @@ use crate::query::IQuery;
 use crate::unregister::IUnRegister;
 
 /// 延迟执行的生命周期回调。
-type BoxedLifecycle = Box<dyn FnOnce() + Send + Sync>;
+type BoxedLifecycle = Box<dyn FnOnce()>;
 
 /// 构建阶段的一次注册动作。
-type BoxedRegistration = Box<dyn FnOnce(&Arc<Architecture>) + Send + Sync>;
+type BoxedRegistration = Box<dyn FnOnce(&Rc<Architecture>)>;
 
 /// 应用架构。通常通过 [`ArchitectureBuilder`] 创建。
 ///
@@ -32,28 +32,28 @@ type BoxedRegistration = Box<dyn FnOnce(&Arc<Architecture>) + Send + Sync>;
 /// ```
 pub struct Architecture {
     name: &'static str,
-    ioc: RwLock<IOCContainer>,
+    ioc: RefCell<IOCContainer>,
     events: TypeEventSystem,
-    inited: AtomicBool,
-    self_ref: OnceLock<Weak<Architecture>>,
-    model_inits: Mutex<Vec<BoxedLifecycle>>,
-    system_inits: Mutex<Vec<BoxedLifecycle>>,
-    model_deinits: Mutex<Vec<BoxedLifecycle>>,
-    system_deinits: Mutex<Vec<BoxedLifecycle>>,
+    inited: Cell<bool>,
+    self_ref: OnceCell<Weak<Architecture>>,
+    model_inits: RefCell<Vec<BoxedLifecycle>>,
+    system_inits: RefCell<Vec<BoxedLifecycle>>,
+    model_deinits: RefCell<Vec<BoxedLifecycle>>,
+    system_deinits: RefCell<Vec<BoxedLifecycle>>,
 }
 
 impl Architecture {
     fn new(name: &'static str) -> Self {
         Self {
             name,
-            ioc: RwLock::new(IOCContainer::new()),
+            ioc: RefCell::new(IOCContainer::new()),
             events: TypeEventSystem::new(),
-            inited: AtomicBool::new(false),
-            self_ref: OnceLock::new(),
-            model_inits: Mutex::new(Vec::new()),
-            system_inits: Mutex::new(Vec::new()),
-            model_deinits: Mutex::new(Vec::new()),
-            system_deinits: Mutex::new(Vec::new()),
+            inited: Cell::new(false),
+            self_ref: OnceCell::new(),
+            model_inits: RefCell::new(Vec::new()),
+            system_inits: RefCell::new(Vec::new()),
+            model_deinits: RefCell::new(Vec::new()),
+            system_deinits: RefCell::new(Vec::new()),
         }
     }
 
@@ -64,13 +64,13 @@ impl Architecture {
 
     /// 是否已经完成初始化。
     pub fn is_inited(&self) -> bool {
-        self.inited.load(Ordering::SeqCst)
+        self.inited.get()
     }
 
-    /// 取得架构自身的 [`Arc`] 句柄。
+    /// 取得架构自身的 [`Rc`] 句柄。
     ///
     /// 只有通过 [`ArchitectureBuilder::build`] 创建的架构才具备自引用。
-    pub fn arc(&self) -> Arc<Architecture> {
+    pub fn rc(&self) -> Rc<Architecture> {
         self.self_ref
             .get()
             .and_then(Weak::upgrade)
@@ -84,7 +84,7 @@ impl Architecture {
 
     /// 已注册的层对象数量（Model + System + Utility）。
     pub fn registered_count(&self) -> usize {
-        self.ioc.read().unwrap().len()
+        self.ioc.borrow().len()
     }
 
     // -----------------------------------------------------------------------
@@ -92,74 +92,68 @@ impl Architecture {
     // -----------------------------------------------------------------------
 
     /// 注册 Model，返回共享句柄。
-    pub fn register_model<M: IModel>(&self, model: M) -> Arc<M> {
-        let model = Arc::new(model);
-        model.arch_ref().set(&self.arc());
-        self.ioc.write().unwrap().register_arc(model.clone());
+    pub fn register_model<M: IModel>(&self, model: M) -> Rc<M> {
+        let model = Rc::new(model);
+        model.arch_ref().set(&self.rc());
+        self.ioc.borrow_mut().register_rc(model.clone());
 
-        if self.inited.load(Ordering::SeqCst) {
+        if self.inited.get() {
             model.init();
         } else {
             let deferred = model.clone();
             self.model_inits
-                .lock()
-                .unwrap()
+                .borrow_mut()
                 .push(Box::new(move || deferred.init()));
         }
 
         let deferred = model.clone();
         self.model_deinits
-            .lock()
-            .unwrap()
+            .borrow_mut()
             .push(Box::new(move || deferred.deinit()));
 
         model
     }
 
     /// 注册 System，返回共享句柄。
-    pub fn register_system<S: ISystem>(&self, system: S) -> Arc<S> {
-        let system = Arc::new(system);
-        system.arch_ref().set(&self.arc());
-        self.ioc.write().unwrap().register_arc(system.clone());
+    pub fn register_system<S: ISystem>(&self, system: S) -> Rc<S> {
+        let system = Rc::new(system);
+        system.arch_ref().set(&self.rc());
+        self.ioc.borrow_mut().register_rc(system.clone());
 
-        if self.inited.load(Ordering::SeqCst) {
+        if self.inited.get() {
             system.init();
         } else {
             let deferred = system.clone();
             self.system_inits
-                .lock()
-                .unwrap()
+                .borrow_mut()
                 .push(Box::new(move || deferred.init()));
         }
 
         let deferred = system.clone();
         self.system_deinits
-            .lock()
-            .unwrap()
+            .borrow_mut()
             .push(Box::new(move || deferred.deinit()));
 
         system
     }
 
     /// 注册 Utility。Utility 不需要架构引用。
-    pub fn register_utility<U: IUtility>(&self, utility: U) -> Arc<U> {
-        let utility = Arc::new(utility);
-        self.ioc.write().unwrap().register_arc(utility.clone());
+    pub fn register_utility<U: IUtility>(&self, utility: U) -> Rc<U> {
+        let utility = Rc::new(utility);
+        self.ioc.borrow_mut().register_rc(utility.clone());
 
-        if self.inited.load(Ordering::SeqCst) {
+        if self.inited.get() {
             utility.init();
         } else {
             let deferred = utility.clone();
             self.system_inits
-                .lock()
-                .unwrap()
+                .borrow_mut()
                 .push(Box::new(move || deferred.init()));
         }
 
         let deferred = utility.clone();
         self.system_deinits
-            .lock()
-            .unwrap()
+            .borrow_mut()
             .push(Box::new(move || deferred.deinit()));
 
         utility
@@ -169,9 +163,9 @@ impl Architecture {
     ///
     /// 调用方负责控制器的初始化、运行和反初始化。
     /// Bevy 表现层通常直接使用系统，无需绑定控制器对象。
-    pub fn attach_controller<C: IController>(&self, controller: C) -> Arc<C> {
-        let controller = Arc::new(controller);
-        controller.arch_ref().set(&self.arc());
+    pub fn attach_controller<C: IController>(&self, controller: C) -> Rc<C> {
+        let controller = Rc::new(controller);
+        controller.arch_ref().set(&self.rc());
         controller
     }
 
@@ -180,33 +174,33 @@ impl Architecture {
     // -----------------------------------------------------------------------
 
     /// 取得 Model，不存在时 panic。
-    pub fn get_model<M: IModel>(&self) -> Arc<M> {
-        self.ioc.read().unwrap().expect::<M>()
+    pub fn get_model<M: IModel>(&self) -> Rc<M> {
+        self.ioc.borrow().expect::<M>()
     }
 
     /// 尝试取得 Model。
-    pub fn try_get_model<M: IModel>(&self) -> Option<Arc<M>> {
-        self.ioc.read().unwrap().get::<M>()
+    pub fn try_get_model<M: IModel>(&self) -> Option<Rc<M>> {
+        self.ioc.borrow().get::<M>()
     }
 
     /// 取得 System，不存在时 panic。
-    pub fn get_system<S: ISystem>(&self) -> Arc<S> {
-        self.ioc.read().unwrap().expect::<S>()
+    pub fn get_system<S: ISystem>(&self) -> Rc<S> {
+        self.ioc.borrow().expect::<S>()
     }
 
     /// 尝试取得 System。
-    pub fn try_get_system<S: ISystem>(&self) -> Option<Arc<S>> {
-        self.ioc.read().unwrap().get::<S>()
+    pub fn try_get_system<S: ISystem>(&self) -> Option<Rc<S>> {
+        self.ioc.borrow().get::<S>()
     }
 
     /// 取得 Utility，不存在时 panic。
-    pub fn get_utility<U: IUtility>(&self) -> Arc<U> {
-        self.ioc.read().unwrap().expect::<U>()
+    pub fn get_utility<U: IUtility>(&self) -> Rc<U> {
+        self.ioc.borrow().expect::<U>()
     }
 
     /// 尝试取得 Utility。
-    pub fn try_get_utility<U: IUtility>(&self) -> Option<Arc<U>> {
-        self.ioc.read().unwrap().get::<U>()
+    pub fn try_get_utility<U: IUtility>(&self) -> Option<Rc<U>> {
+        self.ioc.borrow().get::<U>()
     }
 
     // -----------------------------------------------------------------------
@@ -215,17 +209,15 @@ impl Architecture {
 
     /// 发送命令并等待其执行结果。
     ///
-    /// 命令在**调用线程**上同步执行，架构不会对命令做排队或串行化。因此如果多个
-    /// 线程（例如 Bevy 的并行系统）并发发送同一个「读-改-写」命令，需要保证操作
-    /// 本身是原子的（例如用 [`BindableProperty::modify`](crate::BindableProperty::modify)）。
+    /// 命令在当前线程同步执行，不排队。架构和层对象不能跨线程传递。
     pub fn send_command<C: ICommand>(&self, command: C) -> C::Output {
-        let context = CommandContext::new(self.arc());
+        let context = CommandContext::new(self.rc());
         command.execute(&context)
     }
 
     /// 发送查询并取得结果。
     pub fn send_query<Q: IQuery>(&self, query: Q) -> Q::Result {
-        let context = QueryContext::new(self.arc());
+        let context = QueryContext::new(self.rc());
         query.do_query(&context)
     }
 
@@ -242,7 +234,7 @@ impl Architecture {
     /// 注册事件监听，返回注销句柄。
     pub fn register_event<E: 'static, F>(&self, handler: F) -> IUnRegister
     where
-        F: Fn(&E) + Send + Sync + 'static,
+        F: FnMut(&E) + 'static,
     {
         self.events.register::<E>(handler)
     }
@@ -256,7 +248,7 @@ impl Architecture {
     /// 由 [`ArchitectureBuilder::build`] 自动调用，一般无需手动调用。
     /// 重复调用是安全的（第二次为空操作）。
     pub fn init(&self) {
-        if self.inited.swap(true, Ordering::SeqCst) {
+        if self.inited.replace(true) {
             return;
         }
 
@@ -275,17 +267,17 @@ impl Architecture {
         run_all(&self.system_deinits);
         run_all(&self.model_deinits);
 
-        self.ioc.write().unwrap().clear();
+        self.ioc.borrow_mut().clear();
         self.events.clear();
-        self.inited.store(false, Ordering::SeqCst);
+        self.inited.set(false);
     }
 }
 
 /// 依次执行队列中的回调，并允许回调在运行过程中继续追加。
-fn run_all(queue: &Mutex<Vec<BoxedLifecycle>>) {
+fn run_all(queue: &RefCell<Vec<BoxedLifecycle>>) {
     loop {
         let next = {
-            let mut queue = queue.lock().unwrap();
+            let mut queue = queue.borrow_mut();
             if queue.is_empty() {
                 None
             } else {
@@ -366,23 +358,31 @@ impl ArchitectureBuilder {
     /// ```
     pub fn patch<P>(mut self, patch: P) -> Self
     where
-        P: FnOnce(&Arc<Architecture>) + Send + Sync + 'static,
+        P: FnOnce(&Rc<Architecture>) + 'static,
     {
         self.registrations.push(Box::new(patch));
         self
     }
 
     /// 构建架构并完成两阶段初始化。
-    pub fn build(self) -> Arc<Architecture> {
-        let architecture = Arc::new(Architecture::new(self.name));
-        let _ = architecture.self_ref.set(Arc::downgrade(&architecture));
+    pub fn build(self) -> Rc<Architecture> {
+        let architecture = self.create();
+        self.initialize(&architecture);
+        architecture
+    }
 
+    pub(crate) fn create(&self) -> Rc<Architecture> {
+        let architecture = Rc::new(Architecture::new(self.name));
+        let _ = architecture.self_ref.set(Rc::downgrade(&architecture));
+        architecture
+    }
+
+    pub(crate) fn initialize(self, architecture: &Rc<Architecture>) {
         for register in self.registrations {
-            register(&architecture);
+            register(architecture);
         }
 
         architecture.init();
-        architecture
     }
 }
 

@@ -17,9 +17,9 @@ use crate::context::QueryContext;
 ///
 /// let score = architecture.send_query(GetPlayerScoreQuery);
 /// ```
-pub trait IQuery: Send + Sync + 'static {
+pub trait IQuery: 'static {
     /// 查询结果类型。
-    type Result: Send + 'static;
+    type Result: 'static;
 
     /// 执行查询。
     fn do_query(&self, context: &QueryContext) -> Self::Result;

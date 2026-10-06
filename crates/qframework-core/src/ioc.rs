@@ -1,16 +1,16 @@
 //! 类型化依赖容器：对应 QFramework 的 `IOCContainer`。
 //!
-//! 使用 `TypeId -> Arc<dyn Any>` 的映射按类型注册与解析实例。因为存的是
-//! [`Arc`]，解析时只会做一次原子计数自增，开销可以忽略。
+//! 使用 `TypeId -> Rc<dyn Any>` 的映射按类型注册与解析实例。因为存的是
+//! [`Rc`]，解析只克隆单线程共享句柄，允许注册包含 `RefCell` 的对象。
 
 use std::any::{Any, TypeId, type_name};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::rc::Rc;
 
 /// 基于类型注册 / 解析的容器。
 #[derive(Default)]
 pub struct IOCContainer {
-    instances: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
+    instances: HashMap<TypeId, Rc<dyn Any>>,
 }
 
 impl IOCContainer {
@@ -19,18 +19,18 @@ impl IOCContainer {
         Self::default()
     }
 
-    /// 注册一个实例（内部会包装成 [`Arc`]）。
-    pub fn register<T: Any + Send + Sync>(&mut self, instance: T) {
-        self.register_arc(Arc::new(instance));
+    /// 注册一个实例（内部会包装成 [`Rc`]）。
+    pub fn register<T: Any>(&mut self, instance: T) {
+        self.register_rc(Rc::new(instance));
     }
 
-    /// 注册一个已经包好的 [`Arc`] 实例。
-    pub fn register_arc<T: Any + Send + Sync>(&mut self, instance: Arc<T>) {
+    /// 注册一个已经包好的 [`Rc`] 实例。
+    pub fn register_rc<T: Any>(&mut self, instance: Rc<T>) {
         self.instances.insert(TypeId::of::<T>(), instance);
     }
 
     /// 按类型解析实例。
-    pub fn get<T: Any + Send + Sync>(&self) -> Option<Arc<T>> {
+    pub fn get<T: Any>(&self) -> Option<Rc<T>> {
         self.instances
             .get(&TypeId::of::<T>())
             .cloned()
@@ -38,7 +38,7 @@ impl IOCContainer {
     }
 
     /// 按类型解析实例，若不存在则 panic 并给出可读的类型名。
-    pub fn expect<T: Any + Send + Sync>(&self) -> Arc<T> {
+    pub fn expect<T: Any>(&self) -> Rc<T> {
         self.get::<T>().unwrap_or_else(|| {
             panic!(
                 "类型 `{}` 尚未注册到 IOCContainer，请检查 ArchitectureBuilder::model/system/utility",
@@ -48,7 +48,7 @@ impl IOCContainer {
     }
 
     /// 是否已经注册过类型 `T`。
-    pub fn contains<T: Any + Send + Sync>(&self) -> bool {
+    pub fn contains<T: Any>(&self) -> bool {
         self.instances.contains_key(&TypeId::of::<T>())
     }
 

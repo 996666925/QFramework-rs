@@ -1,0 +1,16 @@
+[package]
+name = "qframework-godot"
+description = "QFramework 的 Godot 集成层：Node Controller、架构绑定与主线程事件消费"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+
+[dependencies]
+qframework-core.workspace = true
+godot.workspace = true

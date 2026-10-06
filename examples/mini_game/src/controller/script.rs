@@ -35,7 +35,7 @@ pub struct ScriptState {
     step: usize,
 }
 
-pub fn run_script(architecture: Res<QArchitecture>, mut state: Local<ScriptState>) {
+pub fn run_script(architecture: NonSend<QArchitecture>, mut state: Local<ScriptState>) {
     let frame = state.frame;
     state.frame += 1;
     if !frame.is_multiple_of(FRAMES_PER_STEP) {

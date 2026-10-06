@@ -176,11 +176,11 @@ Bevy 系统通过 `QArchitecture` 可以访问全部架构 API，这里的业务
 Ok(player.heal(heal))
 ```
 
-### 4. 原子的余额判断
+### 4. 余额判断与扣减
 
 ```rust
 // src/model/player.rs
-// 判断和扣减在同一个写锁内完成，多线程下也不会扣成负数
+// 在一次修改中判断余额并扣减，余额不足时不改变数据
 pub fn spend_gold(&self, amount: i32) -> bool {
     let mut paid = false;
     self.gold.modify(|gold| {

@@ -1,0 +1,11 @@
+[configuration]
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = "4.6"
+
+[libraries]
+windows.debug.x86_64 = "res://../../target/debug/godot_counter.dll"
+windows.release.x86_64 = "res://../../target/release/godot_counter.dll"
+linux.debug.x86_64 = "res://../../target/debug/libgodot_counter.so"
+linux.release.x86_64 = "res://../../target/release/libgodot_counter.so"
+macos.debug = "res://../../target/debug/libgodot_counter.dylib"
+macos.release = "res://../../target/release/libgodot_counter.dylib"

@@ -2,7 +2,7 @@
 //!
 //! 运行：`cargo run -p qframework-core --example counter`
 
-use std::sync::Mutex;
+use std::cell::RefCell;
 
 use qframework_core::prelude::*;
 
@@ -32,8 +32,7 @@ struct CounterModel {
 impl CounterModel {
     /// 修改数据并广播事件（Model 只能通过事件向上层通信）。
     ///
-    /// 用 `modify` 而不是 `get()` + `set()`：前者在一次写锁内完成「读-改-写」，
-    /// 是原子的，多线程下不会丢更新。
+    /// `modify` 就地修改，释放可变借用后统一通知。
     fn add(&self, delta: i32) {
         self.count.modify(|count| *count += delta);
         self.send_event(CountChangedEvent {
@@ -124,9 +123,10 @@ impl CounterSystem {
 // ---------------------------------------------------------------------------
 
 #[derive(Default, IController)]
+#[controller(architecture = CounterApp)]
 struct CounterController {
     arch: ArchRef,
-    subscriptions: Mutex<IUnRegisterList>,
+    subscriptions: RefCell<IUnRegisterList>,
 }
 
 impl CounterController {
@@ -135,18 +135,25 @@ impl CounterController {
         let unregister = self.register_event::<CountChangedEvent, _>(|event| {
             println!("[Controller] 收到事件，当前计数 = {}", event.count);
         });
-        self.subscriptions.lock().unwrap().add(unregister);
+        self.subscriptions.borrow_mut().add(unregister);
     }
 }
 
 // ---------------------------------------------------------------------------
 
+struct CounterApp;
+
+impl QApplication for CounterApp {
+    fn build() -> ArchitectureBuilder {
+        ArchitectureBuilder::new("CounterApp")
+            .utility(ConsoleUtility)
+            .model(CounterModel::default())
+            .system(CounterSystem::default())
+    }
+}
+
 fn main() {
-    let architecture = ArchitectureBuilder::new("CounterApp")
-        .utility(ConsoleUtility)
-        .model(CounterModel::default())
-        .system(CounterSystem::default())
-        .build();
+    let architecture = CounterApp::interface();
 
     println!(
         "架构 `{}` 初始化完成（inited = {}）",
@@ -154,8 +161,8 @@ fn main() {
         architecture.is_inited()
     );
 
-    // Controller 由架构注入引用
-    let controller = architecture.attach_controller(CounterController::default());
+    // Controller 首次访问时自动获取 CounterApp 的共享架构。
+    let controller = CounterController::default();
     controller.start();
 
     // 通过命令改变状态
@@ -176,10 +183,10 @@ fn main() {
     println!("重置后: {}", architecture.send_query(GetCountQuery));
 
     // 注销后不再收到事件
-    controller.subscriptions.lock().unwrap().unregister_all();
+    controller.subscriptions.borrow_mut().unregister_all();
     architecture.send_command(IncreaseCountCommand);
     println!("（事件已注销，上方没有 Controller 的日志）");
 
-    architecture.deinit();
+    CounterApp::deinit_interface();
     println!("架构已反初始化");
 }

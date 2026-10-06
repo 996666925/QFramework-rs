@@ -1,6 +1,6 @@
 //! 自动存档系统：升级时把状态落盘。
 
-use std::sync::Mutex;
+use std::cell::RefCell;
 
 use qframework_core::prelude::*;
 
@@ -17,7 +17,7 @@ use crate::utility::{LogUtility, SaveUtility};
 #[system(init = Self::subscribe)]
 pub struct AutoSaveSystem {
     arch: ArchRef,
-    subscriptions: Mutex<IUnRegisterList>,
+    subscriptions: RefCell<IUnRegisterList>,
 }
 
 impl AutoSaveSystem {
@@ -43,6 +43,6 @@ impl AutoSaveSystem {
             }
         });
 
-        self.subscriptions.lock().unwrap().add(un);
+        self.subscriptions.borrow_mut().add(un);
     }
 }

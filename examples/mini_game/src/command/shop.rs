@@ -29,7 +29,7 @@ impl ICommand for BuyItemCommand {
         let unit_price = shop.price_of(self.item).ok_or(ShopError::NotForSale)?;
         let total = unit_price * self.quantity as i32;
 
-        // 2) 扣钱。`spend_gold` 是原子的：余额不足时不会发生任何改变
+        // 2) 扣钱。`spend_gold` 在余额不足时不改变数据
         if !player.spend_gold(total) {
             return Err(ShopError::NotEnoughGold {
                 needed: total,

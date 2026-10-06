@@ -129,27 +129,10 @@ error[E0119]: conflicting implementations of trait `HasArchRef` for type `Player
 
 一个类型只能是一个层。需要「既是 Model 又是 System」说明职责没拆干净。
 
-### `the trait bound 'XxxModel: Send + Sync + 'static' is not satisfied`
-
-层对象必须能跨线程共享（架构要放进 Bevy 的资源系统）。字段里出现了非 `Send`/`Sync` 的类型：
-
-```rust
-// ❌ Rc / RefCell / Cell 都不是 Sync
-#[derive(Default, IModel)]
-struct BadModel {
-    arch: ArchRef,
-    cache: Rc<RefCell<i32>>,
-}
-
-// ✓
-#[derive(Default, IModel)]
-struct GoodModel {
-    arch: ArchRef,
-    cache: Arc<Mutex<i32>>,      // 或 AtomicI32
-}
-```
-
-同理，用了 `Rc` 的泛型参数也会触发这条错误。
+### 层对象的生命周期约束
+层对象必须满足 `'static`，不能保存借用局部变量的字段。使用拥有所有权的数据或 `Rc`。
+`Rc`、`RefCell`、`Cell` 可以直接放入 Model / System / Utility，框架不要求线程安全。
+Bevy 使用 `NonSend<QArchitecture>`，不要把架构包装为普通 `Resource`。
 
 ### `cannot find derive macro 'IModel' in this scope`
 
@@ -174,18 +157,18 @@ impl ICommand for PurchaseItemCommand {
 
 ### `borrowed value does not live long enough`（在事件回调里）
 
-回调必须是 `Fn(&T) + Send + Sync + 'static`，不能捕获栈上的借用：
+回调必须是 `FnMut(&T) + 'static`，不能捕获栈上的借用：
 
 ```rust
 // ❌ hp_text 是局部借用
 let mut hp_text = String::new();
 architecture.register_event::<HpChangedEvent, _>(|e| { hp_text = e.hp.to_string(); });
 
-// ✓ 捕获 Arc<Mutex<..>>
-let hp_text = Arc::new(Mutex::new(String::new()));
-let sink = Arc::clone(&hp_text);
+// ✓ 捕获 Rc<RefCell<..>>
+let hp_text = Rc::new(RefCell::new(String::new()));
+let sink = Rc::clone(&hp_text);
 architecture.register_event::<HpChangedEvent, _>(move |e| {
-    *sink.lock().unwrap() = e.hp.to_string();
+    *sink.borrow_mut() = e.hp.to_string();
 });
 ```
 
@@ -235,76 +218,31 @@ architecture.get_model::<PlayerModel>();  // 对上才行
 
 ### `Architecture 必须通过 ArchitectureBuilder::build 创建`
 
-`Architecture::arc()` 依赖 `build()` 阶段写入的自引用。不要试图自己构造架构——构造函数是私有的，正常也构造不出来。如果你看到这个 panic，说明有地方绕过了 builder。
+`Architecture::rc()` 依赖 `build()` 阶段写入的自引用。不要试图自己构造架构——构造函数是私有的，正常也构造不出来。如果你看到这个 panic，说明有地方绕过了 builder。
 
-### `PoisonError` / 后续访问全部 panic
-
-之前有线程在**持有锁的情况下** panic 了，锁被标记为中毒。
-
-最可能的来源是 `modify` / `with_value` 的闭包里 panic：
-
+### 属性修改闭包发生 panic
+`RefCell` 没有锁中毒状态，展开栈时会释放借用。已经写入的修改不会自动回滚，
+中断的操作也可能尚未发送通知。先验证输入，再修改属性：
 ```rust
-// ❌ 闭包里的 unwrap 一旦失败，这个属性之后永久不可用
-model.hp.modify(|hp| *hp = data.get("hp").unwrap().parse().unwrap());
-```
-
-**不要在锁内做可能 panic 的操作。** 先在闭包外算好：
-
-```rust
-// ✓ 在外面算，算不出来就提前返回
 let Some(hp) = data.get("hp").and_then(|v| v.parse().ok()) else { return; };
-model.hp.modify(|current| *current = hp);
+model.hp.set(hp);
 ```
 
 ---
 
-## 三、死锁（程序卡住不动）
-
-`std::sync::RwLock` **不可重入**。在持有某个锁的时候再去获取同一个锁，线程会永久阻塞。
-
-### 症状：调用 `modify` / `with_value` 之后程序卡死
-
+## 三、借用冲突
+`modify` 持有可变借用，期间重新读取同一属性会 panic：
 ```rust
-// ❌ 在写锁里读同一个属性 → 死锁
 model.hp.modify(|hp| {
     *hp -= 10;
-    let current = model.hp.get();      // 卡在这里
-});
-
-// ✓
-model.hp.modify(|hp| *hp -= 10);
-let current = model.hp.get();
-```
-
-### 症状：`Display` / `Debug` 输出时卡死
-
-`BindableProperty` 的 `Display` / `Debug` / `PartialEq` 都会读锁，所以它们同样不能出现在锁内：
-
-```rust
-// ❌
-model.hp.modify(|hp| {
-    *hp -= 10;
-    println!("{}", model.hp);          // 卡住
+    let current = model.hp.get(); // 借用冲突
 });
 ```
+修改结束后再读即可。格式化、比较操作也会读取属性，不要放在同一属性的 `modify` 闭包里。
+`with_value` / `with_items` / `with_entries` 只读闭包内可以读取相同数据，但不能修改它。
 
-### 安全的部分
-
-访问**不同的**属性是安全的（锁顺序一致，不会形成环）：
-
-```rust
-// ✓
-model.gold.modify(|gold| {
-    let price = model.price.get();     // 另一个属性
-    *gold -= price;
-});
-```
-
-### 排查方法
-
-1. 搜索所有 `modify(` / `with_value(` / `with_items(` / `with_entries(` 的闭包体。
-2. 检查闭包里有没有出现**同一个**属性、或同一集合的读取方法。
-3. 检查闭包里有没有调用外部函数——那个函数如果回过来碰了同一个属性也会死锁。
+事件回调使用 `FnMut`。同步回调递归触发自身会发生借用冲突；调整通知链，避免循环触发。
+Godot 回调不要重新借用正在发送命令的 Controller；直接捕获需要更新的展示节点。
 
 ---
 
@@ -341,13 +279,13 @@ println!("有人订阅吗: {}", architecture.events().has_listener::<HpChangedEv
 
 ### 事件被处理了两次
 
-`register_with_init_value` 在并发写入时可能重复回调一次（这是**故意的**：宁可重复不可丢失）。如果重复有害，在回调里做幂等判断。
+`set` 不做相等判断；重复设置相同值也会通知。需要去重时在修改前比较，或在回调里做幂等判断。
 
 ### 事件顺序和预期不一致
 
 - 同一类型内的顺序 = **注册顺序**。
 - 跨类型没有顺序保证。
-- 集合（`BindableList` / `BindableDictionary`）的事件在多线程并发写入时顺序不保证与写入顺序一致。
+- 集合回调里继续修改集合会产生嵌套通知，避免循环触发同一回调。
 
 ---
 
@@ -379,7 +317,7 @@ app.install_architecture::<GameA>()
 
 ### `未找到 QArchitecture 资源：请先调用 App::install_architecture::<A>()`
 
-在装插件之前用了 `Res<QArchitecture>` 或 `architecture()`。
+在装插件之前用了 `NonSend<QArchitecture>` 或 `architecture()`。
 
 ### 消息读不到 / 慢一帧
 
@@ -392,41 +330,18 @@ app.install_architecture::<GameA>()
 3. 是否被 `run_if` 条件拦截？
 4. 是否需要用 `.chain()` 或 `.before(...)` / `.after(...)` 明确执行顺序？
 
-### `Res<QArchitecture>` 报访问冲突
-
-Bevy 0.19 里资源存储在单例实体上，宽泛查询会与之冲突：
-
-```rust
-// ❌ 和资源访问冲突
-fn bad(query: Query<EntityMut>, architecture: Res<QArchitecture>) {}
-
-// ✓ 用 Without 排除资源实体
-fn good(query: Query<EntityMut, Without<IsResource>>, architecture: Res<QArchitecture>) {}
-```
+### 架构访问报 Resource 约束错误
+`QArchitecture` 使用 `Rc`，不是普通 `Resource`。系统参数使用 `NonSend<QArchitecture>`，
+World 读取使用 `world.non_send::<QArchitecture>()`。
+同一系统不能同时使用 `NonSend<QArchitecture>` 和 `NonSendMut<QArchitecture>`。
+普通实体查询与 NonSend 数据没有资源实体冲突。
 
 ---
 
 ## 六、行为不符合预期
-
-### 订阅者收到的是别人写的值
-
-并发场景下，`send_event` 的参数是**发送方自己写入的值**（不是「读取时的最新值」）。所以可能出现：
-
-- 线程 A 写 5，通知 5
-- 线程 B 写 6，通知 6
-- 但顺序可能是 B 的 6 先到，A 的 5 后到
-
-如果消费方需要最终一致，就在回调里重新读一次：
-
-```rust
-model.hp.register(|_| {
-    let current = model.hp.get();   // 读最新值，而不是用事件参数
-});
-```
-
-### 计数器少加了
-
-八成是 `get()` + `set()` 而不是 `modify()`。见[最佳实践 · 并发](best-practices.md#三并发相关最重要的一节)。
+### 通知值和最新状态不一致
+事件携带发送时的值。回调可以触发其他状态修改，因此稍后读取 Model 时可能已经变化。
+避免循环通知；只需要最新展示状态时，可以在更新阶段重新读取 Model。
 
 ### `deinit()` 之后一切 panic
 
@@ -450,7 +365,7 @@ println!("{:?}", architecture.try_get_model::<PlayerModel>().is_some());
 println!("{}", architecture.events().has_listener::<HpChangedEvent>());
 
 // 4. 确认架构资源已安装（Bevy）
-println!("{}", app.world().contains_resource::<QArchitecture>());
+println!("{}", app.world().contains_non_send::<QArchitecture>());
 ```
 
 按「数据从哪来 → 谁改了它 → 谁该收到通知」这条链**从后往前**排查，通常比从前往后快。

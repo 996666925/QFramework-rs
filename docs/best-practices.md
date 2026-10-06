@@ -6,7 +6,7 @@
 
 - [一、思维模型：这块数据属于谁](#一思维模型这块数据属于谁)
 - [二、Command 设计](#二command-设计)
-- [三、并发相关（最重要的一节）](#三并发相关最重要的一节)
+- [三、单线程与借用](#三单线程与借用)
 - [四、Model 设计](#四model-设计)
 - [五、事件 vs 状态：怎么选](#五事件-vs-状态怎么选)
 - [六、性能](#六性能)
@@ -64,12 +64,12 @@ struct EquipItemCommand { item_id: ItemId }
 
 ### 2.3 Command 不能持有状态
 
-字段只能是「本次调用的输入」。不要缓存 `Arc`、不要存 `&mut` 引用。
+字段只能是「本次调用的输入」。不要缓存 `Rc`、不要存 `&mut` 引用。
 
 ```rust
 // ❌
 struct BadCommand {
-    cached_model: Arc<PlayerModel>,   // 状态
+    cached_model: Rc<PlayerModel>,   // 状态
 }
 
 // ✓
@@ -115,84 +115,37 @@ fn execute(&self, ctx: &CommandContext) -> Result<(), MyError> {
 
 ---
 
-## 三、并发相关（最重要的一节）
+## 三、单线程与借用
+核心架构、层对象和绑定容器使用 `Rc` / `RefCell`，不要求线程安全，不能把它们传到工作线程。
+Bevy 使用 `NonSend<QArchitecture>`，相关系统在主线程运行；需要先后顺序时仍使用 `.chain()` 或 `.after()`。
 
-这是 Rust 版和 C# 版**语义差异最大**的地方。C# 版跑在 Unity 主线程，这里可能跑在 Bevy 的并行系统里。
-
-### 3.1 复合修改必须用 `modify`
-
+### 3.1 状态修改
+`get()` 后 `set()` 在单线程中可用。`modify()` 便于在一次可变借用中修改复杂状态，结束后统一通知一次：
 ```rust
-// ❌ 会丢更新。两个系统并发执行时，可能都读到 10，都写 11
-let next = model.gold.get() + 100;
-model.gold.set(next);
-
-// ✓ 整个「读-改-写」在一次写锁内完成，是原子的
 model.gold.modify(|gold| *gold += 100);
+model.hp.set(100);
 ```
+Command、事件回调和属性通知都是同步执行的，修改返回前监听器已经执行。
 
-**规则**：任何形如「读出来、算一下、写回去」的操作都要用 `modify`。只有「无条件覆盖成某个已知值」才可以用 `set`。
-
-这条同样适用于 `send_command`——架构不对命令做排队或串行化，命令在调用线程上同步执行：
-
+### 3.2 避免重叠借用
+`modify` 持有可变借用，闭包内不能再读写同一个属性，否则会 panic：
 ```rust
-// 如果两个系统同时发这个命令，下面的加法必须在命令内部是原子的
-architecture.send_command(AddGoldCommand { amount: 100 });
-
-impl ICommand for AddGoldCommand {
-    type Output = ();
-    fn execute(&self, ctx: &CommandContext) {
-        ctx.get_model::<PlayerModel>()
-            .gold
-            .modify(|gold| *gold += self.amount);   // ← 关键在这里
-    }
-}
-```
-
-### 3.2 不要在 `modify` / `with_value` 的闭包里重入同一个属性
-
-`std::sync::RwLock` 不可重入，以下代码会**死锁**（不是编译错误，是运行时卡死）：
-
-```rust
-// ❌ 死锁
+// 错误：在可变借用期间重新读取同一个属性
 model.gold.modify(|gold| {
     *gold += 100;
-    println!("{}", model.gold.get());    // 重新获取读锁 → 死锁
+    println!("{}", model.gold.get());
 });
-
-// ✓ 先算完，再在外面读
+// 正确：修改结束后读取
 model.gold.modify(|gold| *gold += 100);
 println!("{}", model.gold.get());
 ```
+`with_value` / `with_items` / `with_entries` 持有只读借用，允许再次读取，但不能修改同一容器。
+访问不同属性不冲突。属性通知和集合事件在释放数据借用后才发出，回调可以读取最新数据。
 
-访问**其它**属性是安全的（锁顺序一致）：
-
-```rust
-// ✓ 没问题
-model.gold.modify(|gold| {
-    let cost = model.price.get();        // 另一个属性的读锁
-    *gold -= cost;
-});
-```
-
-### 3.3 初始化阶段是单线程的，可以放心用 `set`
-
-`init()` 在 `build()` 里同步执行，此时还没有并行系统。用 `set` 完全没问题：
-
-```rust
-#[model(init = Self::on_init)]
-impl PlayerModel {
-    fn on_init(&self) {
-        self.hp.set(100);        // ✓ 初始化阶段，安全
-        self.gold.set(0);
-    }
-}
-```
-
-### 3.4 集合的并发写入
-
-`BindableList` / `BindableDictionary` 的每次操作本身是原子的，但**事件顺序不保证与写入顺序一致**（事件在释放锁之后发出）。
-
-如果消费方依赖顺序，要么保证只有一个写入方（推荐：所有写入都经过同一个 System），要么在事件里带上自己的序号。
+### 3.3 回调与场景节点
+回调支持 `FnMut + 'static`，可以直接捕获 `Rc`、`RefCell` 或 Godot `Gd`。
+不要在回调中递归触发自身，也不要重新借用正在发送命令的 Godot Controller。
+保存注销句柄，节点退出时清理订阅；初值回调发生 panic 时，框架会撤销刚创建的订阅。
 
 ---
 
@@ -412,7 +365,7 @@ self.send_event(SomethingHappened);
 
 ```rust
 // ❌ 每帧读一次，即使值没变也刷新 UI
-fn sync_hp(architecture: Res<QArchitecture>, mut text: Query<&mut Text>) {
+fn sync_hp(architecture: NonSend<QArchitecture>, mut text: Query<&mut Text>) {
     let hp = architecture.get_model::<PlayerModel>().hp.get();
     for mut t in &mut text { **t = hp.to_string(); }
 }
@@ -432,7 +385,7 @@ fn on_hp_changed(mut reader: MessageReader<HpChangedMessage>, mut text: Query<&m
 let un = self.get_model::<PlayerModel>()
     .hp
     .register_with_init_value(|hp| { /* 更新 UI */ });
-self.subscriptions.lock().unwrap().add(un);
+self.subscriptions.borrow_mut().add(un);
 ```
 
 ### 6.4 每帧执行的表现层系统里别做全量重算
@@ -451,7 +404,7 @@ fn refresh_board(mut board: ResMut<BoardView>) {
 
 ### 6.5 事件订阅数量
 
-每次 `send_event` 都会克隆一遍订阅者列表（`Arc` 自增），然后逐个调用。订阅者数量在几十的量级完全没问题，但不要用它做「每帧上万次发送 + 上百订阅者」的事。
+每次 `send_event` 都会克隆一遍订阅者列表（`Rc` 自增），然后逐个调用。订阅者数量在几十的量级完全没问题，但不要用它做「每帧上万次发送 + 上百订阅者」的事。
 
 ---
 
@@ -465,17 +418,17 @@ fn refresh_board(mut board: ResMut<BoardView>) {
 #[derive(Default, IController)]
 struct HudController {
     arch: ArchRef,
-    subscriptions: Mutex<IUnRegisterList>,
+    subscriptions: RefCell<IUnRegisterList>,
 }
 
 impl HudController {
     fn start(&self) {
-        let mut subs = self.subscriptions.lock().unwrap();
+        let mut subs = self.subscriptions.borrow_mut();
         subs.add(self.get_model::<PlayerModel>().hp.register(|_| { /* ... */ }));
         subs.add(self.register_event::<DamageTakenEvent, _>(|_| { /* ... */ }));
     }
 }
-// HudController 析构 -> Mutex 析构 -> IUnRegisterList 析构 -> 自动注销
+// HudController 析构 -> RefCell 析构 -> IUnRegisterList 析构 -> 自动注销
 ```
 
 `IUnRegisterList` 在 `Drop` 时自动调用 `unregister_all()`，所以「把句柄放进列表」就等价于「自动清理」。
@@ -489,7 +442,7 @@ self.get_model::<PlayerModel>().hp.register(|hp| {
 });
 ```
 
-回调必须是 `Fn(&T) + Send + Sync + 'static`，不能捕获非 `'static` 的借用。正确做法是捕获 `Arc<Mutex<...>>` 或（在 Bevy 里）用消息桥接让真正的系统去改 UI。
+回调必须是 `FnMut(&T) + 'static`，不能捕获非 `'static` 的借用。正确做法是捕获 `Rc<RefCell<...>>` 或（在 Bevy 里）用消息桥接让真正的系统去改 UI。
 
 ### 7.3 一次性订阅
 
@@ -499,17 +452,17 @@ let un = architecture.register_event::<GameStartedEvent, _>(|_| { /* ... */ });
 // 在回调内部拿不到 un（自引用），用共享的 Cell / 在回调外注销
 ```
 
-需要在回调内注销自己时，用 `Arc<Mutex<Option<IUnRegister>>>` 中转：
+需要在回调内注销自己时，用 `Rc<RefCell<Option<IUnRegister>>>` 中转：
 
 ```rust
-let slot: Arc<Mutex<Option<IUnRegister>>> = Arc::new(Mutex::new(None));
-let slot_in_cb = Arc::clone(&slot);
+let slot: Rc<RefCell<Option<IUnRegister>>> = Rc::new(RefCell::new(None));
+let slot_in_cb = Rc::clone(&slot);
 let un = architecture.register_event::<GameStartedEvent, _>(move |_| {
-    if let Some(un) = slot_in_cb.lock().unwrap().take() {
+    if let Some(un) = slot_in_cb.borrow_mut().take() {
         un.unregister();
     }
 });
-*slot.lock().unwrap() = Some(un);
+*slot.borrow_mut() = Some(un);
 ```
 
 ---
@@ -543,7 +496,7 @@ fn purchase_fails_when_not_enough_gold() {
 
 ### 8.2 给每个测试一个干净的架构
 
-不要复用架构实例——`ArchitectureBuilder::build()` 很便宜（几个 `Arc` 分配 + HashMap 插入），每个测试新建一个。
+不要复用架构实例——`ArchitectureBuilder::build()` 很便宜（几个 `Rc` 分配 + HashMap 插入），每个测试新建一个。
 
 ### 8.3 测事件用「记录 + 断言」
 
@@ -554,15 +507,15 @@ fn item_purchased_event_is_emitted() {
         .model(ShopModel::default())
         .build();
 
-    let received = Arc::new(Mutex::new(Vec::new()));
-    let sink = Arc::clone(&received);
+    let received = Rc::new(RefCell::new(Vec::new()));
+    let sink = Rc::clone(&received);
     let _un = architecture.register_event::<ItemPurchasedEvent, _>(move |e| {
-        sink.lock().unwrap().push(e.item_id);
+        sink.borrow_mut().push(e.item_id);
     });
 
     architecture.send_command(PurchaseItemCommand { item_id: 7, quantity: 1 });
 
-    assert_eq!(*received.lock().unwrap(), vec![7]);
+    assert_eq!(*received.borrow_mut(), vec![7]);
 }
 ```
 
@@ -648,10 +601,10 @@ impl QApplication for MyGame {
 | Controller 直接改 Model（跳过 Command） | 状态变更失控 | 一律 `send_command` |
 | Model 里调 `get_system` | **编译不过** | 把逻辑挪到 Command / System |
 | Model 里调另一个 Model | **编译不过** | 在 Command 里协调 |
-| Command 持有 `Arc<Model>` 等状态 | 无法序列化/回放，生命周期混乱 | 只保留输入参数 |
+| Command 持有 `Rc<Model>` 等状态 | 无法序列化/回放，生命周期混乱 | 只保留输入参数 |
 | Query 里改状态 | 破坏只读契约，调试困难 | 用 Command |
-| `get()` + `set()` 做自增 | **并发丢更新** | `modify()` |
-| 在 `modify` 闭包里读同一属性 | **死锁** | 闭包外读 |
+| 把架构或 Model 传给工作线程 | 编译失败，核心采用单线程所有权 | 在主线程使用 |
+| 在 `modify` 闭包里读同一属性 | 借用冲突 panic | 闭包外读 |
 | 订阅后不注销 | 内存泄漏 | `IUnRegisterList` |
 | 用事件当状态查询 | 晚订阅者收不到 | `BindableProperty` |
 | 用事件做请求-响应 | 拿不到结果 | Query / 直接 `get_model` |

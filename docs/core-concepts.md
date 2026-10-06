@@ -20,10 +20,50 @@
 
 ### 创建
 
-`Architecture` 永远通过 `ArchitectureBuilder` 创建，不存在别的构造方式：
+推荐先用 `QApplication` 定义应用，再通过 `MyApp::interface()` 获取共享架构，
+对应原版 `Architecture<T>.Interface`：
 
 ```rust
-let architecture: Arc<Architecture> = ArchitectureBuilder::new("MyApp")
+struct MyApp;
+
+impl QApplication for MyApp {
+    fn build() -> ArchitectureBuilder {
+        ArchitectureBuilder::new("MyApp")
+            .model(PlayerModel::default())
+            .system(BattleSystem::default())
+    }
+}
+
+MyApp::interface().send_command(StartGameCommand);
+
+#[derive(Default, IController)]
+#[controller(architecture = MyApp)]
+struct HudController {
+    arch: ArchRef,
+}
+
+let hud = HudController::default();
+let player = hud.get_model::<PlayerModel>(); // 首次访问自动绑定，无需传递架构
+```
+
+每个应用类型拥有独立入口（泛型的不同类型参数也相互独立）。首次访问完成注册、
+两阶段初始化，后续返回当前线程同一个 `Rc<Architecture>`。
+初始化钩子可在当前线程访问本应用入口，但 `QApplication::build()` 不能递归访问自己。
+架构和层对象不能跨线程传递；共享入口按类型保存在当前线程。
+
+`#[controller(architecture = MyApp)]` 保留 `arch: ArchRef`：显式注入优先，自动绑定只在
+第一次访问时发生，绑定后不会切换到其他实例。Model / System 仍由注册过程注入。
+
+应用所有使用者退出后调用 `MyApp::deinit_interface()` 清理并释放共享入口，
+下次访问会重新构建。场景切换不需要清理共享架构；旧节点和 Model 不会自动绑定新实例。
+共享入口用 `deinit_interface()` 清理，直接调用实例的 `deinit()` 不会释放共享入口。
+生命周期钩子内不能递归调用 `deinit_interface()`。
+
+测试、多实例和 Bevy 世界使用独立架构：`MyApp::build().build()` 或直接使用 builder。
+所有架构底层仍通过 `ArchitectureBuilder` 创建：
+
+```rust
+let architecture: Rc<Architecture> = ArchitectureBuilder::new("MyApp")
     .model(PlayerModel::default())        // 注册数据层
     .system(BattleSystem::default())      // 注册业务逻辑层
     .utility(FileUtility::default())      // 注册工具层
@@ -32,7 +72,7 @@ let architecture: Arc<Architecture> = ArchitectureBuilder::new("MyApp")
             architecture.register_system(DebugPanelSystem::default());
         }
     })
-    .build();                             // 注册 + 两阶段初始化，返回 Arc
+    .build();                             // 注册 + 两阶段初始化，返回 Rc
 ```
 
 `patch` 的执行时机被精确定义为：**所有 `model` / `system` / `utility` 之后、两阶段初始化之前**。此时层对象已进容器、架构引用已注入，但 `init()` 还没调用，所以你可以从容器里取对象，也可以再注册新对象。
@@ -56,7 +96,7 @@ let system = architecture.get_system::<BattleSystem>();
 let util   = architecture.get_utility::<FileUtility>();
 ```
 
-返回的是 `Arc<T>`，不是引用。这意味着你可以安全地把它存进别的地方、发到别的线程——析构由引用计数管理。
+返回的是 `Rc<T>`，不是借用。可在当前线程保存和共享，由引用计数管理所有权。
 
 `get_model` 的 panic 信息带类型全名：
 
@@ -90,9 +130,9 @@ architecture.send_event_default::<GameStartedEvent>();
 | `name() -> &'static str` | 架构名，仅供日志与调试 |
 | `is_inited() -> bool` | 是否已完成两阶段初始化 |
 | `registered_count() -> usize` | 已注册的层对象数量 |
-| `arc() -> Arc<Architecture>` | 取得自身句柄（层对象内部用它注入引用） |
+| `rc() -> Rc<Architecture>` | 取得自身句柄（层对象内部用它注入引用） |
 | `events() -> &TypeEventSystem` | 直接访问事件总线 |
-| `attach_controller(c) -> Arc<C>` | 给控制器注入架构引用（不进 IOC） |
+| `attach_controller(c) -> Rc<C>` | 给控制器注入架构引用（不进 IOC） |
 | `init()` / `deinit()` | 生命周期，正常由 builder / Bevy 插件调用 |
 
 **`deinit()` 是终态操作。** 调用后 IOC 与事件都被清空，`get_model` 之类会 panic。重复调用安全。在 Bevy 中由 `QFrameworkPlugin::cleanup` 自动触发。
@@ -101,17 +141,17 @@ architecture.send_event_default::<GameStartedEvent>();
 
 ## IOCContainer
 
-基于 `TypeId -> Arc<dyn Any + Send + Sync>` 的类型化容器。一般不需要直接用——`Architecture` 已经把常用的取用封装好了。
+基于 `TypeId -> Rc<dyn Any>` 的类型化容器。一般不需要直接用——`Architecture` 已经把常用的取用封装好了。
 
 ```rust
 use qframework_core::IOCContainer;
 
 let mut container = IOCContainer::new();
 container.register(MyConfig { retries: 3 });
-container.register_arc(Arc::new(MyService::new()));
+container.register_rc(Rc::new(MyService::new()));
 
 assert!(container.contains::<MyConfig>());
-let config: Arc<MyConfig> = container.get::<MyConfig>().unwrap();
+let config: Rc<MyConfig> = container.get::<MyConfig>().unwrap();
 container.clear();
 ```
 
@@ -164,19 +204,19 @@ unregister.unregister();
 `EasyEvent<T>` 就是「某一个类型的事件」本身，如果你只需要一个局部的事件源（比如一个 UI 组件的内部通知），不需要动用全局总线：
 
 ```rust
-use std::sync::Arc;
+use std::rc::Rc;
 use qframework_core::EasyEvent;
 
-let on_refresh = Arc::new(EasyEvent::<()>::new());
-let _unregister = Arc::clone(&on_refresh).register(|_| println!("refresh!"));
+let on_refresh = Rc::new(EasyEvent::<()>::new());
+let _unregister = Rc::clone(&on_refresh).register(|_| println!("refresh!"));
 on_refresh.send(&());
 ```
 
-注意 `register` 的接收者是 `Arc<Self>`（内部要存一个 `Weak` 以便自动失效），所以要先 `Arc` 起来。
+注意 `register` 的接收者是 `Rc<Self>`（内部要存一个 `Weak` 以便自动失效），所以要先 `Rc` 起来。
 
 ### 全局事件系统
 
-不持有架构的代码（比如一个独立的工具模块）可以用进程级全局总线：
+不持有架构的代码（比如一个独立的工具模块）可以用当前线程共享的全局总线：
 
 ```rust
 let bus = TypeEventSystem::global();
@@ -184,13 +224,13 @@ let _unregister = bus.register::<AppPausedEvent>(|_| { /* ... */ });
 bus.send(AppPausedEvent);
 ```
 
-它是 `&'static` 的，跨架构共享，但**注册项会在进程存活期间一直存在**（除了显式注销）。适合框架级、真正全局的事件，不要拿它当架构内事件用。
+它返回当前线程共享的 `Rc<TypeEventSystem>`，跨架构共享。注册项在当前线程存活期间持续存在，直到显式注销或清空。适合框架级事件，不要拿它当架构内事件用。
 
 ### 相关 API
 
 | 方法 | 说明 |
 |---|---|
-| `TypeEventSystem::global() -> &'static Self` | 全局总线 |
+| `TypeEventSystem::global() -> Rc<Self>` | 当前线程共享的全局总线 |
 | `register::<T, F>(f) -> IUnRegister` | 订阅，返回注销句柄 |
 | `send::<T>(event)` / `send_default::<T>()` | 广播 |
 | `has_listener::<T>() -> bool` | 是否有人订阅 |
@@ -229,7 +269,7 @@ impl ICommand for PurchaseItemCommand {
             return Err(ShopError::NotEnoughCurrency);
         }
 
-        // 原子地「读-改-写」
+        // 就地修改并通知
         shop.currency.modify(|c| *c -= price);
         shop.owned.modify(|map| { *map += self.quantity; });
 
@@ -239,7 +279,7 @@ impl ICommand for PurchaseItemCommand {
 }
 ```
 
-**Command 不应该有「状态」**：字段只能是「本次调用的输入参数」。不要在里面存 `Arc<Something>` 缓存、不要用 `&mut self` 之外的方式持有可变状态。用单元结构体表达无参数命令（`struct TickCommand;`）。
+**Command 不应该有「状态」**：字段只能是「本次调用的输入参数」。不要在里面存 `Rc<Something>` 缓存、不要用 `&mut self` 之外的方式持有可变状态。用单元结构体表达无参数命令（`struct TickCommand;`）。
 
 ### 写一个 Query
 
@@ -255,7 +295,7 @@ impl IQuery for GetInventoryQuery {
 }
 ```
 
-Query 必须是纯只读的。返回大对象时优先返回引用/切片**做不到**（结果必须是 `Send + 'static`），所以要么返回 `Rc`/`Arc` 包的数据，要么返回小的聚合结果（例如 `len()` 而不是整个 `Vec`）。
+Query 必须是纯只读的。返回大对象时优先返回引用/切片**做不到**（结果使用拥有所有权的 `'static` 类型），所以要么返回 `Rc` 包装的共享数据，要么返回小的聚合结果（例如 `len()` 而不是整个 `Vec`）。
 
 ### 上下文的能力边界
 
@@ -272,7 +312,7 @@ Query 必须是纯只读的。返回大对象时优先返回引用/切片**做�
 
 ### 什么时候可以不写 Query
 
-Query 的价值是把「怎么取」和「取什么」解耦。如果调用方本来就持有架构引用（Bevy 系统里的 `Res<QArchitecture>`），直接 `architecture.get_model::<X>()` 完全没问题。
+Query 的价值是把「怎么取」和「取什么」解耦。如果调用方本来就持有架构引用（Bevy 系统里的 `NonSend<QArchitecture>`），直接 `architecture.get_model::<X>()` 完全没问题。
 
 **Query 真正的价值在于**：跨层的只读契约、需要在多个地方复用同一段取数逻辑、或者你想让「读」这个动作本身有名字（便于日志/性能统计）。
 
@@ -282,7 +322,7 @@ Query 的价值是把「怎么取」和「取什么」解耦。如果调用方�
 
 四层的共同点：
 
-- 都实现 `Send + Sync + 'static`（架构要放进 Bevy Resource，必须能跨线程共享）。
+- 都要求 `'static`，无需线程安全约束，可持有 `Rc` / `RefCell`；Controller 不存入 IOC，可持有场景节点。
 - 都有可选的 `init(&self)` / `deinit(&self)` 钩子。
 - Controller / System / Model 需要 `ArchRef` 字段（`Weak<Architecture>`），Utility 不需要。
 
@@ -295,7 +335,7 @@ Query 的价值是把「怎么取」和「取什么」解耦。如果调用方�
 #[derive(Default, IController)]
 struct HudController {
     arch: ArchRef,
-    subscriptions: Mutex<IUnRegisterList>,
+    subscriptions: RefCell<IUnRegisterList>,
 }
 
 impl HudController {
@@ -305,12 +345,12 @@ impl HudController {
             .get_model::<PlayerModel>()
             .hp
             .register_with_init_value(|hp| println!("HP: {hp}"));
-        self.subscriptions.lock().unwrap().add(un);
+        self.subscriptions.borrow_mut().add(un);
 
         let un = self.register_event::<DamageTakenEvent, _>(|event| {
             println!("受到 {} 点伤害", event.amount);
         });
-        self.subscriptions.lock().unwrap().add(un);
+        self.subscriptions.borrow_mut().add(un);
     }
 }
 ```
@@ -337,7 +377,7 @@ System 是「跨多个 Controller 复用的逻辑」的归属地。典型例子�
 #[system(init = |this: &AchievementSystem| { this.subscribe(); })]
 struct AchievementSystem {
     arch: ArchRef,
-    subscriptions: Mutex<IUnRegisterList>,
+    subscriptions: RefCell<IUnRegisterList>,
 }
 
 impl AchievementSystem {
@@ -346,7 +386,7 @@ impl AchievementSystem {
             // 这里可以做跨 Model 的协调，这是 Model 做不到的
             println!("击杀 {} -> 检查成就", event.enemy_id);
         });
-        self.subscriptions.lock().unwrap().add(un);
+        self.subscriptions.borrow_mut().add(un);
     }
 }
 ```
@@ -434,14 +474,14 @@ let has_sword = player.inventory.with_value(|items| items.contains(&ItemId::Swor
 
 ```rust
 player.hp.set(100);                                  // 覆盖，通知
-player.hp.modify(|hp| *hp = (*hp - 10).max(0));       // 读-改-写，原子，通知
+player.hp.modify(|hp| *hp = (*hp - 10).max(0));       // 就地修改，通知
 player.hp.set_value_without_event(100);               // 静默写入，不通知
 ```
 
-| 方法 | 通知 | 原子性 | 用途 |
+| 方法 | 通知 | 修改方式 | 用途 |
 |---|:---:|:---:|---|
-| `set(v)` | ✓ | 单次写入是原子的 | 直接赋值 |
-| `modify(f)` | ✓ | **整个读-改-写是原子的** | 计数器、条件修改 |
+| `set(v)` | ✓ | 替换当前值 | 直接赋值 |
+| `modify(f)` | ✓ | 一次可变借用，释放后通知 | 计数器、条件修改 |
 | `set_value_without_event(v)` | ✗ | — | 初始化、批量同步 |
 
 `set` 不做相等判断：即使新旧值相同也会通知。需要去重就在回调里自己判断，或者用 `if prop.get() != v { prop.set(v) }`。
@@ -456,7 +496,8 @@ let un = player.hp.register(|hp| println!("HP: {hp}"));
 let un = player.hp.register_with_init_value(|hp| hp_label.text = hp.to_string());
 ```
 
-`register_with_init_value` 的实现是**先注册、再读取当前值回调**，因此不会漏掉注册窗口内发生的其它变更；并发写入时可能出现一次重复回调，但不会丢更新。对 UI 刷新来说重复无害、丢失致命，这个取舍是有意的。
+`register_with_init_value` 先注册，再同步调用初值回调。初值回调 panic 时撤销订阅。
+回调支持 `FnMut + 'static`，可以直接捕获 `Rc` / Godot 节点；不能递归触发自身。
 
 ### 其它
 
@@ -464,7 +505,7 @@ let un = player.hp.register_with_init_value(|hp| hp_label.text = hp.to_string())
 player.hp == 100;                    // impl PartialEq<T>
 println!("{}", player.hp);           // impl Display（读当前值）
 println!("{:?}", player.hp);         // impl Debug
-let hp2 = player.hp.clone();         // 克隆的是 Arc，共享同一份数据
+let hp2 = player.hp.clone();         // 克隆的是 Rc，共享同一份数据
 player.hp.handler_count();           // 当前订阅者数量
 ```
 
@@ -535,7 +576,7 @@ model.stats.with_entries(|entries| entries.len());
 
 ### 语义注意
 
-**事件在数据写入之后发出**，不是持有锁期间发出。因此在多线程并发写入时，事件到达顺序不保证与写入顺序一致；但每个事件携带的值一定是当时真实写入的值。
+**事件在数据写入并释放借用之后同步发出**，回调可以读取集合。回调中继续修改数据会产生嵌套通知，避免通知链循环。
 
 **`clear()` 对空集合是空操作**，不会发出 `on_clear`。
 
@@ -555,21 +596,24 @@ un.unregister();
 // 2. 交给列表，Drop 时自动注销（推荐）
 struct MyController {
     arch: ArchRef,
-    subscriptions: Mutex<IUnRegisterList>,
+    subscriptions: RefCell<IUnRegisterList>,
 }
 
-self.subscriptions.lock().unwrap().add(un);
-// 控制器析构时 Mutex 析构 -> IUnRegisterList 析构 -> 逐个 unregister
+self.subscriptions.borrow_mut().add(un);
+// 控制器析构时 RefCell 析构 -> IUnRegisterList 析构 -> 逐个 unregister
 
 // 3. 手动批量注销
-subscriptions.lock().unwrap().unregister_all();
+subscriptions.borrow_mut().unregister_all();
 ```
 
 `unregister()` 是幂等的，重复调用安全。
 
 ### 会自动失效的句柄
 
-`IUnRegister` 内部持有 `Weak<EasyEvent<T>>`。如果架构已经 `deinit` 或整个被析构，句柄会静默变成空操作，不会 panic。这是 Rust 版相比 C# 版的一个优势：不需要记得在 GameObject 销毁前清理。
+事件订阅返回的 `IUnRegister` 通过 `Weak<EasyEvent<T>>` 引用事件源。事件源清空或释放后，句柄会静默变成空操作，不会 panic。订阅者提前销毁时仍应注销，避免回调留在仍存活的事件源中。
+
+Godot 集成提供 `unregister_when_node_destroyed` 和 `unregister_when_tree_exited`，
+可把句柄直接绑定到节点生命周期，见 [Godot 自动注销](godot.md#自动注销)。
 
 ---
 
@@ -581,7 +625,7 @@ subscriptions.lock().unwrap().unregister_all();
 | 注入架构引用 | ✓（Construction） | ✓ | ✗（不需要） | ✓ |
 | `init(&self)` | 第 1 批 | 第 2 批 | 第 2 批 | 调用方显式调用 |
 | `deinit(&self)` | 最后 | 最先（与 Utility 一起） | 最先（与 System 一起） | 调用方显式调用 |
-| 析构 | 架构 `deinit()` 或整体 drop | 同左 | 同左 | 最后一个 `Arc<C>` 释放 |
+| 析构 | 架构 `deinit()` 或整体 drop | 同左 | 同左 | 最后一个 `Rc<C>` 释放 |
 
 **注册顺序 = `init` 顺序**（同一批次内）。所以 `.model(A).model(B)` 保证 A 先于 B 初始化。
 

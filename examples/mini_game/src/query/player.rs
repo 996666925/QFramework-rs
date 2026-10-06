@@ -6,7 +6,7 @@ use crate::model::PlayerModel;
 
 /// 玩家状态快照。
 ///
-/// Query 的结果类型必须是 `Send + 'static`，所以这里返回一份拷贝而不是引用。
+/// Query 的结果类型必须是 `'static`，所以这里返回一份拷贝而不是引用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlayerSnapshot {
     /// 当前血量。

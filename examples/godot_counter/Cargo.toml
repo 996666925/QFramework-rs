@@ -1,0 +1,16 @@
+[package]
+name = "godot-counter"
+description = "Godot Node 实现 IController 的计数器与无窗口集成检查"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+qframework-core.workspace = true
+qframework-godot.workspace = true
+godot.workspace = true

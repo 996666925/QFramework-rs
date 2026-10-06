@@ -5,7 +5,8 @@
 //! - [`QFrameworkPlugin`]：把架构放入 Bevy 世界，成为 [`QArchitecture`] 资源；
 //! - [`QArchitecture`]：`Deref` 到 [`qframework_core::Architecture`]，可在任意系统里使用；
 //! - [`QEventBridgePlugin`]：把 QFramework 事件桥接成 Bevy 的 [`Message`](bevy::prelude::Message)；
-//! 表现层直接使用 Bevy 系统，通过 `Res<QArchitecture>` 访问业务架构。
+//!
+//! 表现层直接使用 Bevy 系统，通过 `NonSend<QArchitecture>` 访问业务架构。
 //!
 //! ## 快速开始
 //!
@@ -31,7 +32,7 @@
 //!         .run();
 //! }
 //!
-//! fn my_system(architecture: Res<QArchitecture>) {
+//! fn my_system(architecture: NonSend<QArchitecture>) {
 //!     architecture.send_command(DoSomething);
 //! }
 //! ```

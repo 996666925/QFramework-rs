@@ -3,7 +3,7 @@
 //! Bevy 的缓冲事件（现在叫 `Message`）只能在系统中写入，而 QFramework
 //! 的事件可能在 Command / Model 的任意一层被触发。桥接的做法是：
 //!
-//! 1. 监听 QFramework 事件 `M`，把事件推进一个跨线程队列；
+//! 1. 监听 QFramework 事件 `M`，把事件推进一个待转发队列；
 //! 2. 每帧在 `PreUpdate` 把队列里的内容写入 Bevy 的 `Messages<M>`；
 //! 3. 其他系统照常使用 `MessageReader<M>`。
 //!
@@ -17,23 +17,23 @@
 //! }
 //! ```
 
+use std::cell::RefCell;
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
+use std::rc::Rc;
 
 use bevy::prelude::*;
 
 use crate::app::QArchitecture;
 
 /// 存放「等待转发到 Bevy 的 QFramework 事件」的队列。
-#[derive(Resource)]
 pub struct QEventBridge<M: Message + Clone> {
-    queue: Arc<Mutex<Vec<M>>>,
+    queue: Rc<RefCell<Vec<M>>>,
 }
 
 impl<M: Message + Clone> Default for QEventBridge<M> {
     fn default() -> Self {
         Self {
-            queue: Arc::new(Mutex::new(Vec::new())),
+            queue: Rc::new(RefCell::new(Vec::new())),
         }
     }
 }
@@ -41,17 +41,17 @@ impl<M: Message + Clone> Default for QEventBridge<M> {
 impl<M: Message + Clone> QEventBridge<M> {
     /// 推入一个待转发事件。
     pub fn push(&self, message: M) {
-        self.queue.lock().unwrap().push(message);
+        self.queue.borrow_mut().push(message);
     }
 
     /// 取出全部待转发事件。
     pub fn drain(&self) -> Vec<M> {
-        std::mem::take(&mut self.queue.lock().unwrap())
+        std::mem::take(&mut self.queue.borrow_mut())
     }
 
     /// 当前积压数量。
     pub fn len(&self) -> usize {
-        self.queue.lock().unwrap().len()
+        self.queue.borrow().len()
     }
 
     /// 队列是否为空。
@@ -60,8 +60,8 @@ impl<M: Message + Clone> QEventBridge<M> {
     }
 
     /// 取得队列的共享句柄（供事件监听器使用）。
-    pub fn queue(&self) -> Arc<Mutex<Vec<M>>> {
-        Arc::clone(&self.queue)
+    pub fn queue(&self) -> Rc<RefCell<Vec<M>>> {
+        Rc::clone(&self.queue)
     }
 }
 
@@ -99,27 +99,27 @@ impl<M: Message + Clone> Plugin for QEventBridgePlugin<M> {
     fn build(&self, app: &mut App) {
         let architecture = app
             .world()
-            .get_resource::<QArchitecture>()
+            .get_non_send::<QArchitecture>()
             .expect("QEventBridgePlugin 必须在 QFrameworkPlugin 之后添加")
-            .arc();
+            .rc();
 
         let bridge = QEventBridge::<M>::default();
         let queue = bridge.queue();
 
         // QFramework 事件 -> 队列
         architecture.register_event::<M, _>(move |event| {
-            queue.lock().unwrap().push(event.clone());
+            queue.borrow_mut().push(event.clone());
         });
 
         app.add_message::<M>();
-        app.insert_resource(bridge);
+        app.insert_non_send(bridge);
         app.add_systems(PreUpdate, forward_messages::<M>);
     }
 }
 
 /// 把队列中的事件写入 Bevy 的 `Messages<M>`。
 pub(crate) fn forward_messages<M: Message + Clone>(
-    bridge: Res<QEventBridge<M>>,
+    bridge: NonSend<QEventBridge<M>>,
     mut writer: MessageWriter<M>,
 ) {
     for message in bridge.drain() {
