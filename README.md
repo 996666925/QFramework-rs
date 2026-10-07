@@ -11,6 +11,7 @@
 - **Godot Node Controller**：基于 gdext 0.5.5，节点直接派生 `IController`
 - **应用共享入口**：`MyApp::interface()` 懒加载，Controller 声明所属应用即可自动获取架构
 - **Cargo workspace 结构**：架构核心与引擎解耦
+- **CLI 模板生成器**：`qframework generate command PlayerAttack` 创建 Command、Query、四层对象、事件与应用文件
 - **运行时零外部依赖**：`qframework-core` 只用标准库；派生宏放在独立的 `qframework-macros`，即使用户不想要过程宏也可以只依赖核心
 - 全部测试与示例均可在无窗口环境下运行
 
@@ -45,7 +46,8 @@ qframework/
 │   ├── qframework-bevy/           # Bevy 架构插件、资源与消息桥接
 │   │   ├── examples/bevy_counter.rs
 │   │   └── tests/                # Bevy 集成与文档示例校验
-│   └── qframework-godot/          # Node Controller 绑定与事件接收队列
+│   ├── qframework-godot/          # Node Controller 绑定与事件接收队列
+│   └── qframework-cli/            # command / system 等 Rust 模板生成器
 └── examples/
     ├── mini_game/                 # 完整示例工程（业务架构 + Bevy 表现层）
     └── godot_counter/             # Godot Node / Node2D 示例与 headless 检查
@@ -62,6 +64,7 @@ qframework/
 | [架构总览](docs/architecture.md) | 四层职责、依赖规则表、CQRS、与 Bevy ECS 的关系、与 C# 版的差异 |
 | [核心概念](docs/core-concepts.md) | `Architecture`、IOC、事件系统、Command/Query、可观察容器、生命周期总表 |
 | [派生宏](docs/derive-macros.md) | 四个派生宏的完整规则、`arch` 字段、生命周期钩子、展开后的代码、常见错误 |
+| [CLI 模板生成器](docs/cli.md) | 安装与生成命令、模板类型、模块声明管理、Godot Controller |
 | [Bevy 集成](docs/bevy.md) | 插件安装、资源访问、表现层系统、消息桥接、系统排序、无窗口测试 |
 | [Godot 集成](docs/godot.md) | Node Controller、架构绑定、场景访问、事件接收、节点生命周期 |
 | [最佳实践](docs/best-practices.md) | 推荐写法、单线程借用、性能、测试策略、命名与目录约定、反模式清单 |

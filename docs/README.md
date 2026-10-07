@@ -12,6 +12,7 @@
 | [架构总览](architecture.md) | 四层职责、依赖规则、CQRS、与 Bevy ECS 的关系 | 上手前，建立心智模型 |
 | [核心概念](core-concepts.md) | `Architecture`、IOC、事件系统、Command/Query、可观察容器、生命周期 | 写代码时当参考手册 |
 | [派生宏](derive-macros.md) | `#[derive(IModel)]` 等四个宏的完整规则与限制 | 定义层对象时 |
+| [CLI 模板生成器](cli.md) | command、query、四层对象、事件与应用模板、Godot Controller | 创建业务模块时 |
 | [Bevy 集成](bevy.md) | 插件、资源、表现层系统、消息桥接、系统排序、无窗口测试 | 在 Bevy 项目里落地时 |
 | [Godot 集成](godot.md) | Node Controller、架构绑定、主线程事件消费、场景访问 | 在 Godot 节点里使用 Controller 时 |
 | [最佳实践](best-practices.md) | 推荐写法、反模式、命名约定、性能与测试策略 | **写业务代码前必读** |

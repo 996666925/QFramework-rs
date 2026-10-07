@@ -5,6 +5,7 @@ members = [
     "crates/qframework-macros",
     "crates/qframework-bevy",
     "crates/qframework-godot",
+    "crates/qframework-cli",
     "examples/mini_game",
     "examples/godot_counter",
 ]

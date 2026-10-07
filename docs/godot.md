@@ -33,6 +33,12 @@ struct PlayerController {
 
 完整 `INode` 实现、场景和 GDExtension 入口见 [godot_counter](../examples/godot_counter/README.md)。
 
+也可以用 [CLI 模板生成器](cli.md) 创建节点文件：
+
+```bash
+qframework controller Player --godot --architecture crate::app::game_app::GameApp
+```
+
 ## 架构与生命周期
 
 1. 定义实现 `QApplication` 的应用类型，并在节点上声明 `#[controller(architecture = GameApp)]`。
@@ -134,7 +140,7 @@ self.get_model::<CounterModel>().count.register_with_init_value(
 ## 验证
 
 ```powershell
-cargo test --workspace --all-targets --offline
+cargo test --workspace --all-targets --offline 
 ./examples/godot_counter/run.ps1 -Smoke -GodotPath 'E:\Godot\Godot_v4.7-stable_win64.exe'
 ```
 

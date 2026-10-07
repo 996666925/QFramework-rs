@@ -1299,6 +1299,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "qframework-cli"
+version = "0.1.0"
+dependencies = [
+ "heck",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "qframework-core"
 version = "0.1.0"
 dependencies = [
