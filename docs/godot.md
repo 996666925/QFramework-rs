@@ -132,6 +132,7 @@ self.get_model::<CounterModel>().count.register_with_init_value(
 
 [godot-bevy](https://github.com/bytemeadow/godot-bevy) 0.12 使用 Bevy 0.19 与 gdext 0.5。
 本 crate 直接使用 [gdext](https://github.com/godot-rust/gdext) 0.5.5，同一项目可以同时依赖两个集成层。
+当前 `qframework-bevy` 使用 Bevy 0.20.1；若要接入同一个 Bevy App，需选择同样使用 Bevy 0.20 的 godot-bevy 版本。
 在 Bevy 系统或应用组装时从 `QArchitecture::rc()` 取得架构句柄，
 再于 Godot 主线程通过 `Gd<T>::bind_mut()` 注入 Controller。
 架构和 Node / `Gd` 都留在 Godot 主线程。Bevy 系统通过 `NonSend<QArchitecture>` 使用架构；

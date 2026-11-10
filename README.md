@@ -7,7 +7,7 @@
 保留了 QFramework 最核心的设计——**四层架构 + 编译期依赖约束 + CQRS + 事件驱动 + 可绑定属性**，
 并用 Rust 的 trait 系统把「谁能访问谁」变成**编译错误**，而不是靠开发者自觉。
 
-- **兼容 Bevy 最新版（0.19.x）**
+- **兼容 Bevy 最新版（0.20.x）**
 - **Godot Node Controller**：基于 gdext 0.5.5，节点直接派生 `IController`
 - **应用共享入口**：`MyApp::interface()` 懒加载，Controller 声明所属应用即可自动获取架构
 - **Cargo workspace 结构**：架构核心与引擎解耦
@@ -357,7 +357,7 @@ cargo run -p qframework-bevy --example bevy_counter # Bevy 集成最小示例
 cargo run -p mini-game                              # 完整示例工程
 ```
 
-要求：Rust 1.95+（edition 2024）。`qframework-bevy` 依赖 Bevy 0.19。
+要求：Rust 1.97.1+（edition 2024）。`qframework-bevy` 依赖 Bevy 0.20.1。
 
 ---
 

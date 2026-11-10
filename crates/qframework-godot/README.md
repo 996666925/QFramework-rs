@@ -70,5 +70,6 @@ impl INode for Hud {
 在自身依赖中使用 `godot = "0.5.5"` 即可通过 Cargo feature 合并启用完整生成。
 
 可与 [godot-bevy](https://github.com/bytemeadow/godot-bevy) 共用架构：
+接入同一个 Bevy App 时，godot-bevy 的 Bevy 版本需与 `qframework-bevy` 的 0.20 一致。
 从 `qframework_bevy::QArchitecture::rc()` 取得共享句柄，在 Godot 主线程注入节点。
 节点只保存弱引用，场景根节点、Autoload 或 Bevy Resource 必须持有架构的强引用。

@@ -239,7 +239,7 @@ qframework-core/          与引擎无关，运行时零依赖（只用 std）
 qframework-macros/        过程宏（唯一引入外部依赖的 crate）
 └── layer.rs              四个派生宏的公共展开逻辑
 
-qframework-bevy/          Bevy 0.19 集成
+qframework-bevy/          Bevy 0.20 集成
 ├── app.rs                QFrameworkPlugin / QArchitecture（重导出核心 QApplication）
 └── bridge.rs             QFramework 事件 -> Bevy Message
 ```

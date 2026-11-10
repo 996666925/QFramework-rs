@@ -1,6 +1,6 @@
 # Bevy 集成
 
-`qframework-bevy` 把业务架构接入 Bevy 0.19。它只做三件事：
+`qframework-bevy` 把业务架构接入 Bevy 0.20。它只做三件事：
 
 1. 把架构装成 Bevy 资源 `QArchitecture`；
 2. 把 QFramework 事件桥接成 Bevy 消息；
@@ -15,7 +15,7 @@
 
 ```toml
 [dependencies]
-bevy = "0.19"
+bevy = "0.20.1"
 qframework-core = "0.1"
 qframework-bevy = "0.1"
 ```
