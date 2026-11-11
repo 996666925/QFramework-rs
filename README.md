@@ -363,4 +363,4 @@ cargo run -p mini-game                              # 完整示例工程
 
 ## License
 
-MIT
+GNU General Public License v3.0 or later（GPL-3.0-or-later）。
