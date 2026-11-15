@@ -44,9 +44,20 @@ impl From<Rc<Architecture>> for QArchitecture {
     }
 }
 
+// 独立于可克隆的公开句柄，确保反初始化跟随世界的生命周期。
+// Plugin::cleanup 在首帧之前执行，不能用作应用退出钩子。
+struct QArchitectureOwner(Rc<Architecture>);
+
+impl Drop for QArchitectureOwner {
+    fn drop(&mut self) {
+        self.0.deinit();
+    }
+}
+
 /// 把 QFramework 架构安装进 Bevy 世界。
 ///
 /// 插件会在 `build` 阶段完成架构的创建与两阶段初始化。
+/// 世界销毁时自动反初始化；手动推进帧时可用 `app.architecture().deinit()` 提前清理。
 pub struct QFrameworkPlugin<A: QApplication> {
     _application: PhantomData<fn() -> A>,
 }
@@ -74,13 +85,8 @@ impl<A: QApplication> Plugin for QFrameworkPlugin<A> {
         );
 
         let architecture = A::build().build();
+        app.insert_non_send(QArchitectureOwner(Rc::clone(&architecture)));
         app.insert_non_send(QArchitecture(architecture));
-    }
-
-    fn cleanup(&self, app: &mut App) {
-        if let Some(architecture) = app.world().get_non_send::<QArchitecture>() {
-            architecture.deinit();
-        }
     }
 }
 

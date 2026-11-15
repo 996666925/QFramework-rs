@@ -4,7 +4,7 @@
 
 1. 把架构装成 Bevy 资源 `QArchitecture`；
 2. 把 QFramework 事件桥接成 Bevy 消息；
-3. 清理架构（由插件的 `cleanup` 钩子执行）。
+3. 在 Bevy 世界销毁时清理架构。
 
 表现层直接使用 Bevy 系统，输入、场景节点和 UI 通过 `Query`、`Commands`、Resource 访问。
 核心在单线程运行，`QArchitecture` 和桥接队列作为 `NonSend` 数据安装，访问它们的系统在主线程执行。
@@ -73,18 +73,12 @@ fn main() {
 
 ### 插件做的事
 
-```rust
-fn build(&self, app: &mut App) {
-    let architecture = A::build().build();      // 注册 + 两阶段初始化
-    app.insert_non_send(QArchitecture(architecture));
-}
+插件在 `build` 阶段完成注册与两阶段初始化，并把架构和负责清理的内部对象安装到世界中。
+世界销毁时自动调用 `architecture.deinit()`，即使外部仍保存架构句柄也会清理。
+手动推进帧时，可以在使用完架构后调用 `app.architecture().deinit()` 提前清理；之后不应再运行依赖架构的系统。
 
-fn cleanup(&self, app: &mut App) {
-    architecture.deinit();                       // System / Model deinit + 清空
-}
-```
-
-`cleanup` 是 Bevy 的插件生命周期钩子。手动推进帧的无窗口示例在使用完架构后显式调用 `app.cleanup()`；若架构需要贯穿运行循环，应由应用在结束时安排清理。
+Bevy 的 `app.finish()` / `app.cleanup()` 用于完成插件初始化，在正常运行循环的首帧之前执行。
+它们不会销毁 QFramework 架构，也不能用作应用退出清理。
 
 `QApplication` 来自核心 crate，此处重导出以保持已有用法。插件通过 `A::build().build()`
 创建本世界的独立架构，多个 Bevy App 不共享状态。`A::interface()` 是另一份按应用类型
@@ -161,8 +155,9 @@ app.add_systems(Update, (tick_counter, refresh_scene).chain());
 ### 订阅生命周期
 
 优先用 `bridge_messages` 与 `MessageReader` 响应业务事件。
-直接订阅可绑定属性时，把 `IUnRegisterList` 保存在 Resource 或 Component 中，
-它随资源移除或实体销毁而析构，自动注销订阅。回调可以设置共享脏标记，实际 UI 修改在 Bevy 系统中执行。
+直接订阅可绑定属性时，把 `IUnRegisterList` 保存在通过 `insert_non_send` / `init_non_send` 安装的状态中，
+通过 `NonSend` / `NonSendMut` 访问。它包含 `Rc`，无法作为普通 Resource 或 Component 的字段。
+状态移除并析构时自动注销订阅。回调可以设置共享脏标记，实际 UI 修改在 Bevy 系统中执行。
 完整示例见 `examples/mini_game/src/controller/hud.rs`。
 
 核心库的 `IController` 仍可用于非 Bevy 场景；Controller 生命周期由宿主管理，Bevy 中直接使用系统生命周期。
@@ -248,6 +243,8 @@ fn peek(bridge: NonSend<QEventBridge<HpChangedMessage>>) {
 }
 ```
 
+移除并析构 `QEventBridge<M>` 会注销对应的架构事件订阅，后续转发系统会跳过该类型。
+
 ---
 
 ## 七、与 Bevy 状态机配合
@@ -314,7 +311,8 @@ fn systems_run_every_frame() {
 
 - `MinimalPlugins` 提供 `TimePlugin`，系统可通过 `Res<Time>` 获取帧间隔。
 - **不要调用 `app.run()`**（会进入无限循环）；用 `app.update()` 手动推进帧。
-- 验证 `deinit` 行为可以直接调用 `app.cleanup()`，它会触发 `Plugin::cleanup`。
+- 如需模拟正常插件初始化，在首次 `update()` 前调用 `app.finish()` 和 `app.cleanup()`。
+- 验证自动反初始化时，先保存 `app.architecture()` 句柄，再 `drop(app)`；也可以显式调用 `app.architecture().deinit()`。
 - 想断言 Bevy 消息，读写之间要隔一次 `update()`（见上面的时序表）。
 
 `qframework-bevy` 自己的 `tests/integration.rs` 就是这套写法，可以直接参考。

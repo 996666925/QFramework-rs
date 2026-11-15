@@ -22,18 +22,23 @@ use std::marker::PhantomData;
 use std::rc::Rc;
 
 use bevy::prelude::*;
+use qframework_core::IUnRegisterList;
 
 use crate::app::QArchitecture;
 
 /// 存放「等待转发到 Bevy 的 QFramework 事件」的队列。
+///
+/// 插件创建的桥接在析构时自动注销架构事件订阅。
 pub struct QEventBridge<M: Message + Clone> {
     queue: Rc<RefCell<Vec<M>>>,
+    subscriptions: IUnRegisterList,
 }
 
 impl<M: Message + Clone> Default for QEventBridge<M> {
     fn default() -> Self {
         Self {
             queue: Rc::new(RefCell::new(Vec::new())),
+            subscriptions: IUnRegisterList::new(),
         }
     }
 }
@@ -103,13 +108,14 @@ impl<M: Message + Clone> Plugin for QEventBridgePlugin<M> {
             .expect("QEventBridgePlugin 必须在 QFrameworkPlugin 之后添加")
             .rc();
 
-        let bridge = QEventBridge::<M>::default();
+        let mut bridge = QEventBridge::<M>::default();
         let queue = bridge.queue();
 
         // QFramework 事件 -> 队列
-        architecture.register_event::<M, _>(move |event| {
+        let subscription = architecture.register_event::<M, _>(move |event| {
             queue.borrow_mut().push(event.clone());
         });
+        bridge.subscriptions.add(subscription);
 
         app.add_message::<M>();
         app.insert_non_send(bridge);
@@ -119,9 +125,12 @@ impl<M: Message + Clone> Plugin for QEventBridgePlugin<M> {
 
 /// 把队列中的事件写入 Bevy 的 `Messages<M>`。
 pub(crate) fn forward_messages<M: Message + Clone>(
-    bridge: NonSend<QEventBridge<M>>,
+    bridge: Option<NonSend<QEventBridge<M>>>,
     mut writer: MessageWriter<M>,
 ) {
+    let Some(bridge) = bridge else {
+        return;
+    };
     for message in bridge.drain() {
         writer.write(message);
     }

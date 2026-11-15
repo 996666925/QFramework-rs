@@ -134,7 +134,7 @@ architecture.send_event_default::<GameStartedEvent>();
 | `attach_controller(c) -> Rc<C>` | 给控制器注入架构引用（不进 IOC） |
 | `init()` / `deinit()` | 生命周期，正常由 builder / Bevy 插件调用 |
 
-**`deinit()` 是终态操作。** 调用后 IOC 与事件都被清空，`get_model` 之类会 panic。重复调用安全。在 Bevy 中由 `QFrameworkPlugin::cleanup` 自动触发。
+**`deinit()` 是终态操作。** 调用后 IOC 与事件都被清空，`get_model` 之类会 panic。重复调用安全。在 Bevy 中随世界销毁自动触发，也可以在使用完架构后调用 `app.architecture().deinit()`。Bevy 的插件 `cleanup` 在首帧之前执行，不负责反初始化架构。
 
 ---
 

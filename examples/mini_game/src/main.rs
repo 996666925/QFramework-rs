@@ -131,5 +131,5 @@ fn main() {
     }
 
     print_summary(&mut app);
-    app.cleanup();
+    app.architecture().deinit();
 }

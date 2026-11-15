@@ -498,7 +498,7 @@ fn check_bevy() {
     );
     let _handle: Rc<Architecture> = app.world().non_send::<QArchitecture>().rc();
 
-    app.cleanup();
+    app.architecture().deinit();
 }
 
 // ===========================================================================

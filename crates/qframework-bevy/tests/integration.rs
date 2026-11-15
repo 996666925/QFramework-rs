@@ -1,3 +1,6 @@
+use std::cell::Cell;
+
+use bevy::app::{AppExit, ScheduleRunnerPlugin};
 use bevy::prelude::*;
 use qframework_bevy::prelude::*;
 
@@ -68,8 +71,8 @@ fn build_app() -> App {
 
 #[test]
 fn bevy_worlds_and_shared_application_keep_separate_instances() {
-    let mut first = build_app();
-    let mut second = build_app();
+    let first = build_app();
+    let second = build_app();
     let shared = TestApp::interface();
 
     first.architecture().send_command(IncreaseCountCommand);
@@ -78,10 +81,12 @@ fn bevy_worlds_and_shared_application_keep_separate_instances() {
     assert_eq!(shared.send_query(GetCountQuery), 0);
     assert!(!std::rc::Rc::ptr_eq(&first.architecture(), &shared));
 
-    first.cleanup();
+    let first_architecture = first.architecture();
+    drop(first);
+    assert!(!first_architecture.is_inited());
     assert!(second.architecture().is_inited());
     assert!(shared.is_inited());
-    second.cleanup();
+    drop(second);
     TestApp::deinit_interface();
 }
 
@@ -180,16 +185,136 @@ fn only_one_qframework_plugin_is_allowed() {
 }
 
 #[test]
-fn architecture_is_deinited_on_cleanup() {
+fn plugin_cleanup_keeps_architecture_available() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
-        .install_architecture::<TestApp>();
+        .install_architecture::<TestApp>()
+        .add_systems(Update, tick);
 
-    app.update();
+    app.finish();
+    app.cleanup();
     let architecture = app.architecture();
     assert!(architecture.is_inited());
 
-    app.cleanup();
+    app.update();
+    assert_eq!(architecture.send_query(GetCountQuery), 1);
+}
+
+#[derive(Default, IUtility)]
+#[utility(deinit = |this: &LifecycleProbe| this.deinits.set(this.deinits.get() + 1))]
+struct LifecycleProbe {
+    deinits: Cell<u32>,
+}
+
+#[test]
+fn world_drop_deinits_architecture_even_with_external_handles() {
+    let app = build_app();
+    let architecture = app.architecture();
+    let probe = architecture.register_utility(LifecycleProbe::default());
+    let resource_clone = app.world().non_send::<QArchitecture>().clone();
+    drop(resource_clone);
+    assert!(architecture.is_inited());
+
+    drop(app);
     assert!(!architecture.is_inited());
     assert!(architecture.try_get_model::<CounterModel>().is_none());
+    assert!(!architecture.events().has_listener::<CountChangedMessage>());
+    assert_eq!(probe.deinits.get(), 1);
+}
+
+#[test]
+fn explicit_deinit_then_world_drop_runs_hooks_once() {
+    let app = build_app();
+    let architecture = app.architecture();
+    let probe = architecture.register_utility(LifecycleProbe::default());
+
+    architecture.deinit();
+    drop(app);
+    assert_eq!(probe.deinits.get(), 1);
+}
+
+#[test]
+fn default_runner_can_use_architecture_and_deinits_on_return() {
+    let mut app = App::new();
+    app.install_architecture::<TestApp>()
+        .add_systems(Update, tick);
+    let architecture = app.architecture();
+    let model = architecture.get_model::<CounterModel>();
+
+    assert_eq!(app.run(), AppExit::Success);
+    assert_eq!(model.count.get(), 1);
+    assert!(!architecture.is_inited());
+}
+
+#[test]
+fn schedule_runner_can_use_architecture_and_deinits_on_return() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin::run_once()))
+        .install_architecture::<TestApp>()
+        .add_systems(Update, tick);
+    let architecture = app.architecture();
+    let model = architecture.get_model::<CounterModel>();
+
+    assert_eq!(app.run(), AppExit::Success);
+    assert_eq!(model.count.get(), 1);
+    assert!(!architecture.is_inited());
+}
+
+#[test]
+fn loop_runner_keeps_architecture_and_bridge_alive_until_exit() {
+    fn exit_after_messages(observed: Res<Observed>, mut exit: MessageWriter<AppExit>) {
+        if observed.0.len() == 4 {
+            assert_eq!(observed.0, vec![1, 2, 3, 4]);
+            exit.write(AppExit::Success);
+        }
+    }
+
+    let mut app = build_app();
+    app.add_systems(Update, (tick, exit_after_messages.after(collect_messages)));
+    let architecture = app.architecture();
+    let probe = architecture.register_utility(LifecycleProbe::default());
+
+    assert_eq!(app.run(), AppExit::Success);
+    assert!(!architecture.is_inited());
+    assert_eq!(probe.deinits.get(), 1);
+}
+
+#[test]
+fn dropping_bridge_unregisters_listener_and_releases_queue() {
+    let mut app = build_app();
+    let architecture = app.architecture();
+    let queue = app
+        .world()
+        .non_send::<QEventBridge<CountChangedMessage>>()
+        .queue();
+    let weak_queue = std::rc::Rc::downgrade(&queue);
+    drop(queue);
+
+    let bridge = app
+        .world_mut()
+        .remove_non_send::<QEventBridge<CountChangedMessage>>()
+        .unwrap();
+    drop(bridge);
+
+    assert!(!architecture.events().has_listener::<CountChangedMessage>());
+    assert!(weak_queue.upgrade().is_none());
+    architecture.send_command(IncreaseCountCommand);
+    app.update();
+    assert!(app.world().resource::<Observed>().0.is_empty());
+}
+
+#[test]
+fn update_events_are_forwarded_once_on_the_next_frame() {
+    let mut app = build_app();
+    app.add_systems(Update, tick);
+
+    app.update();
+    assert!(app.world().resource::<Observed>().0.is_empty());
+    app.update();
+    assert_eq!(app.world().resource::<Observed>().0, vec![1]);
+
+    for _ in 0..4 {
+        app.update();
+    }
+    assert_eq!(app.world().resource::<Observed>().0, vec![1, 2, 3, 4]);
 }

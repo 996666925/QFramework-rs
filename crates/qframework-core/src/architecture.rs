@@ -255,7 +255,7 @@ impl Architecture {
     /// `false`，此时再调用 `get_model` / `get_system` / `get_utility` 会 panic。
     /// 重复调用是安全的（第二次为空操作）。
     ///
-    /// `qframework-bevy` 会在应用退出时自动调用它。
+    /// `qframework-bevy` 会在 Bevy 世界销毁时自动调用它。
     pub fn deinit(&self) {
         run_all(&self.system_deinits);
         run_all(&self.model_deinits);

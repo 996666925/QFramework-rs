@@ -329,7 +329,8 @@ Model / Command / System 在任意位置触发。桥接插件的工作方式是�
 反初始化顺序相反：System → Model → 清空 IOC 与事件。
 
 `deinit` 是**终态**操作：调用之后架构不可再使用（`get_model` 等会 panic），重复调用是安全的。
-在 Bevy 中由 `QFrameworkPlugin` 的 `cleanup` 钩子触发；手动推进帧时，使用完架构后调用 `app.cleanup()`。
+在 Bevy 中随世界销毁自动触发；手动推进帧时，也可以在使用完架构后调用 `app.architecture().deinit()`。
+Bevy 的 `app.cleanup()` 在首帧之前完成插件初始化，不负责销毁架构。
 
 如果需要按条件注册可选模块，用 `patch`——它对应 C# 版的 `OnRegisterPatch`，
 在所有 `model` / `system` / `utility` 之后、初始化之前执行：
